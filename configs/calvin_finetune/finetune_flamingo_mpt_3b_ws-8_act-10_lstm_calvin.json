@@ -1,9 +1,9 @@
 {
-    "robovlm_name": "RoboFlamingo",
+    "robovlm_name": "RoboPaliGemma",
     "parent": null,
-    "task_name": "calvin_finetune",
-    "model": "flamingo",
-    "model_url": "https://huggingface.co/openflamingo/OpenFlamingo-3B-vitl-mpt1b-langinstruct",
+    "task_name": "calvin_finetune_paligemma",
+    "model": "paligemma",
+    "model_url": "google/paligemma-3b-mix-224",
     "seq_len": 1,
     "fwd_pred_next_n": 10,
     "arm_gripper_loss_ratio": 0.01,
@@ -15,7 +15,7 @@
     "image_std": [0.26862954, 0.26130258, 0.27577711],
     "seed": 123,
     "batch_size": 4,
-    "num_workers": 16,
+    "num_workers": 0,
     "data_scale": 1,
     "optimizer": "adam",
     "learning_rate": 1e-4,
@@ -34,8 +34,6 @@
     "output_root": "runs/checkpoints",
     "log_root": "runs/logs",
     "cache_root": "runs/cache",
-    "model_path": ".vlms/mpt-1b-redpajama-200b-dolly",
-    "model_config": ".vlms/mpt-1b-redpajama-200b-dolly/config.json",
     "model_load_path": null,
     "model_load_source": "torch",
     "gradient_clip_val": 1.0,
@@ -45,17 +43,19 @@
         "clip_vision_encoder_pretrained": "openai"
     },
     "vlm": {
-        "type": "AutoModelForCausalLM",
-        "pretrained_model_name_or_path": "mpt-1b-redpajama-200b-dolly",
-        "name": "mpt_1b_ift",
-        "residual": false
+        "type": "AutoModelForVision2Seq",
+        "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+        "name": "paligemma_3b",
+        "residual": false,
+        "params": {
+        }
     },
     "tokenizer": {
         "type": "AutoTokenizer",
-        "pretrained_model_name_or_path": "mpt-1b-redpajama-200b-dolly",
-        "tokenizer_type": "flamingo",
+        "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+        "tokenizer_type": "auto",
         "max_text_len": 32,
-        "additional_special_tokens": ["<|endofchunk|>", "<image>"]
+        "additional_special_tokens": ["<image>"]
     },
     "train_setup": {
         "predict_action": true,
@@ -83,12 +83,12 @@
     },
     "fwd_head": null,
     "trainer": {
-        "accelerator": "gpu",
-        "strategy": "deepspeed_stage_2",
-        "precision": "16-mixed",
+        "accelerator": "mps",
+        "strategy": "auto", 
+        "precision": "32-true",
         "logger": ["tensorboard"],
         "gradient_clip_val": 1.0,
-        "use_distributed_sampler": true,
+        "use_distributed_sampler": false,
         "log_every_n_steps": 100,
         "max_epochs": 5,
         "val_check_interval": null,
@@ -100,7 +100,7 @@
             "type": "DiskCalvinDataset",
             "data_dir": "calvin_data/task_ABCD_D/training",
             "shift_first": false,
-            "tokenizer_type": "flamingo",
+            "tokenizer_type": "auto",
             "rgb_pad": 10,
             "gripper_pad": 4,
             "traj_cons": true
@@ -108,7 +108,7 @@
     "val_dataset": {
             "type": "DiskCalvinDataset",
             "data_dir": "calvin_data/task_ABCD_D/validation",
-            "tokenizer_type": "flamingo"
+            "tokenizer_type": "auto"
     },
     "norm_action": true,
     "norm_min": -0.65,

@@ -15,9 +15,8 @@ def build_vlm(vlm_config, tokenizer_config, precision="bf16"):
 
         model = PaliGemmaForConditionalGeneration.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            torch_dtype=torch.float32,
             device_map="cpu",
-            revision="bfloat16",
         )
         tokenizer = AutoProcessor.from_pretrained(model_path)
     elif model_name == "llava":

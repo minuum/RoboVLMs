@@ -14,6 +14,7 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 from lightning.pytorch.strategies import DDPStrategy
 from lightning import seed_everything
+import torch
 import torch.distributed as dist
 
 from robovlms.train.base_trainer import BaseTrainer
@@ -60,10 +61,36 @@ def init_trainer_config(configs):
     trainer_config["devices"] = configs.get("gpus", "auto")
     trainer_config["num_nodes"] = configs.get("num_nodes", 1)
     trainer_config["gradient_clip_val"] = configs.get("gradient_clip_val", 0.0)
-    exp_name = configs.get("exp_name", "default")
+    
+    # accelerator와 strategy 설정
+    trainer_config["accelerator"] = configs.get("accelerator", "auto")
+    raw_strategy = configs.get("strategy", None)
 
-    if "strategy" not in trainer_config or trainer_config["strategy"] == "ddp":
+    # MPS 사용 시 precision 설정 강제
+    # configs["trainer"]는 parse_args와 update_configs를 통해 커맨드라인 인자 또는 설정 파일 값을 가질 수 있음
+    # 여기서 accelerator가 mps이면 precision을 강제로 "32-true"로 설정
+    current_precision_from_config = configs.get("trainer", {}).get("precision")
+    if trainer_config["accelerator"] == "mps":
+        if current_precision_from_config != "32-true" and current_precision_from_config is not None: # None일 때는 메시지 출력 안함
+            print(f"INFO: MPS accelerator detected. Overriding precision from '{current_precision_from_config}' to '32-true' for compatibility.")
+        trainer_config["precision"] = "32-true"
+    elif current_precision_from_config is not None:
+        trainer_config["precision"] = current_precision_from_config
+    else:
+        # 기본 precision 설정 (MPS가 아니고, 설정 파일에도 없을 경우)
+        trainer_config["precision"] = "32-true" # 기본값을 32-true로 설정
+
+    exp_name = configs.get("exp_name", "default_exp")
+    if exp_name is None:
+        exp_name = "default_experiment_name_fallback"
+
+    if trainer_config["accelerator"] == "mps" and raw_strategy == "ddp":
+        print("Warning: DDP strategy is not fully supported on MPS. Consider using 'auto' or other compatible strategies.")
+        trainer_config["strategy"] = "auto"
+    elif raw_strategy == "ddp":
         trainer_config["strategy"] = DDPStrategy(find_unused_parameters=True)
+    elif raw_strategy:
+        trainer_config["strategy"] = raw_strategy
 
     # init loggers
     loggers = None
@@ -107,46 +134,79 @@ def init_trainer_config(configs):
 
 
 def experiment(variant):
-    seed_everything(variant["seed"] + int(os.environ["RANK"]))
-    # import pdb; pdb.set_trace()
-    trainer_config = init_trainer_config(variant)
+    seed_everything(variant["seed"] + int(os.environ.get("RANK", 0)))
     model_load_path = variant.get("model_load_path", None)
 
+    # 1. model_url을 기반으로 실제 사용할 모델 저장소 이름 및 경로 결정
+    true_repo_name = "default_model_repo"  # 기본값
+    if variant.get("model_url"):
+        repo_name_from_url = variant["model_url"].split("/")[-1]
+        if repo_name_from_url.endswith(".git"):
+            true_repo_name = repo_name_from_url[:-4]
+        else:
+            true_repo_name = repo_name_from_url
+    elif variant.get("model_path"):
+        path_parts = Path(variant['model_path']).parts
+        if len(path_parts) > 0 and path_parts[0] == ".vlms":
+            if len(path_parts) > 1:
+                if path_parts[1] == "VLMs" and len(path_parts) > 2:
+                    true_repo_name = path_parts[2]
+                else:
+                    true_repo_name = path_parts[1]
+        else: 
+            true_repo_name = Path(variant['model_path']).name
+
+    true_model_path = os.path.join(".vlms", true_repo_name)
+    print(f"DEBUG: Determined true_model_path: {true_model_path}")
+
+    # 2. variant의 모든 관련 경로를 true_model_path로 통일하여 강제 업데이트
+    original_model_path_in_variant = variant.get('model_path')
+    variant['model_path'] = true_model_path
+    variant['model_config'] = os.path.join(true_model_path, "config.json")
+    print(f"DEBUG: variant['model_path'] updated from '{original_model_path_in_variant}' to '{variant['model_path']}'")
+
+    if "tokenizer" in variant and isinstance(variant["tokenizer"], dict):
+        original_tokenizer_path = variant['tokenizer'].get('pretrained_model_name_or_path')
+        variant["tokenizer"]["pretrained_model_name_or_path"] = true_model_path
+        print(f"DEBUG: tokenizer path updated from '{original_tokenizer_path}' to '{true_model_path}'")
+    else:
+        print(f"DEBUG: tokenizer config not found or not a dict in variant.")
+
+    if "vlm" in variant and isinstance(variant["vlm"], dict):
+        original_vlm_path = variant['vlm'].get('pretrained_model_name_or_path')
+        variant["vlm"]["pretrained_model_name_or_path"] = true_model_path
+        print(f"DEBUG: vlm path updated from '{original_vlm_path}' to '{true_model_path}'")
+    else:
+        print(f"DEBUG: vlm config not found or not a dict in variant.")
+
+    # 3. 모델 다운로드 (이제 통일되고 업데이트된 variant['model_path'] 기준)
+    if not os.path.exists(variant['model_path']):
+        if variant.get("model_url"): 
+            print(
+                f"VLM backbone not found at {variant['model_path']}. Cloning {variant.get('model', true_repo_name)} from {variant['model_url']} into {variant['model_path']}..."
+            )
+            os.makedirs(os.path.dirname(variant['model_path']), exist_ok=True)
+            os.system(f"git clone {variant['model_url']} {variant['model_path']}")
+        else:
+            error_msg = f"Model not found at {variant['model_path']} and model_url is not provided. Cannot download."
+            print(f"ERROR: {error_msg}")
+            raise FileNotFoundError(error_msg)
+    else:
+        print(f"DEBUG: Model already exists at {variant['model_path']}. Skipping download.")
+    
+    trainer_config = init_trainer_config(variant)
     trainer = Trainer(**trainer_config)
     variant["gpus"] = trainer.num_devices
     variant["train_setup"]["precision"] = variant["trainer"]["precision"]
 
-    if variant["fwd_head"] is not None:
-        variant["train_setup"]["predict_forward_hand"] = variant["fwd_head"].get(
-            "pred_hand_image", False
-        )
-
-    if not os.path.exists(variant['model_path']):
-        repo_name = variant["model_url"].split("/")[-1].split(".")[0]
-        print(
-            f"VLM backbone does not exist, cloning {variant['model']} from {variant['model_url']}..."
-        )
-        os.system(f"git clone {variant['model_url']} .vlms/{repo_name}")
-        variant['model_path'] = ".vlms/" + repo_name
-        variant['model_config'] = os.path.join(variant['model_path'], "config.json")
-    
-    if variant["model"] == "kosmos":
-        import transformers
-
-        package_dir = transformers.__path__[0]
-        os.system(
-            "cp tools/modeling_kosmos2.py {}/models/kosmos2/modeling_kosmos2.py".format(
-                package_dir
-            )
-        )
-
-        import importlib
-
-        importlib.reload(transformers)
-    
     model = BaseTrainer.from_checkpoint(
         model_load_path, variant.get("model_load_source", "torch"), variant
     )
+
+    # MPS 호환성을 위해 모델 전체를 float32로 명시적 변환
+    if trainer_config.get("accelerator") == "mps":
+        print("INFO: MPS accelerator detected. Explicitly casting the entire model to float32.")
+        model = model.float()
 
     image_preprocess = model.model.image_processor
 
@@ -251,7 +311,6 @@ def update_configs(configs, args):
             configs[k] = v
         if isinstance(v, dict):
             for sub_k, sub_v in v.items():
-                # assert sub_k in configs[k], f"{sub_k} not in configs {k}"
                 if sub_v != None:
                     configs[k][sub_k] = sub_v
         else:
@@ -265,8 +324,8 @@ def parse_args():
 
     # Experiment
     parser.add_argument("config", type=str, help="config file used for training")
-    parser.add_argument("--gpus", default=1, type=int)
-    parser.add_argument("--num_nodes", default=1, type=int)
+    parser.add_argument("--gpus", default=None, type=int)
+    parser.add_argument("--num_nodes", default=None, type=int)
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--log_dir", default=None, type=str)
     parser.add_argument("--output_dir", default=None, type=str)
@@ -301,6 +360,7 @@ def parse_args():
     # Trainer
     trainer_parser = parser.add_argument_group("trainer")
     trainer_parser.add_argument("--strategy", default=None, type=str)
+    trainer_parser.add_argument("--accelerator", default=None, type=str)
     trainer_parser.add_argument("--precision", default=None, type=str)
     trainer_parser.add_argument("--gradient_clip_val", default=None, type=float)
     trainer_parser.add_argument("--max_epochs", default=None, type=int)
@@ -344,5 +404,28 @@ if __name__ == "__main__":
     configs = load_config(args.get("config"))
     configs = update_configs(configs, args)
 
-    dist.init_process_group(backend="nccl")
+    # 분산 처리 초기화 조건 명확히 수정
+    is_ddp_strategy = False
+    # trainer 그룹의 strategy 확인
+    trainer_strategy_conf = configs.get("trainer", {}).get("strategy")
+    if isinstance(trainer_strategy_conf, str) and "ddp" in trainer_strategy_conf.lower():
+        is_ddp_strategy = True
+    elif isinstance(trainer_strategy_conf, DDPStrategy):
+        is_ddp_strategy = True
+    
+    # configs 루트 레벨의 strategy 확인 (커맨드 라인 인자 우선)
+    config_strategy_conf = configs.get("strategy")
+    if isinstance(config_strategy_conf, str) and "ddp" in config_strategy_conf.lower():
+        is_ddp_strategy = True
+
+    if configs.get("accelerator") != "mps" and is_ddp_strategy:
+        if dist.is_available() and not dist.is_initialized():
+            print("Initializing process group for DDP...")
+            backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+            if os.environ.get("RANK") is None or os.environ.get("WORLD_SIZE") is None:
+                 print("Warning: RANK and WORLD_SIZE environment variables are not set for DDP. This might lead to errors if not using torchrun.")
+            dist.init_process_group(backend=backend)
+    elif configs.get("accelerator") == "mps":
+        print("MPS accelerator selected. Skipping explicit process group initialization.")
+    
     experiment(variant=configs)

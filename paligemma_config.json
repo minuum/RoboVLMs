@@ -1,0 +1,58 @@
+{
+    "robovlm_name": "RoboPaligemma",
+    "model": "paligemma",
+    "model_url": "https://huggingface.co/google/paligemma-3b-pt-224",
+    "model_path": "/Users/minu/dev/Robot/RoboVLMs/.vlms/paligemma-3b-pt-224",
+    "model_config": "/Users/minu/dev/Robot/RoboVLMs/.vlms/paligemma-3b-pt-224/config.json",
+    "image_size": 224,
+    "window_size": 8,
+    "fwd_pred_next_n": 10,
+    "batch_size": 4,
+    "optimizer": "adamw",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.0,
+    "train_setup": {
+        "precision": "bf16",
+        "predict_action": true,
+        "predict_forward": false,
+        "predict_forward_hand": false,
+        "predict_caption": false,
+        "train_vision": true,
+        "bits": -1,
+        "freeze_mm_mlp_adapter": false,
+        "freeze_backbone": false,
+        "freeze_resampler": false,
+        "tune_mm_mlp_adapter": false,
+        "mm_use_im_start_end": false,
+        "mm_use_im_patch_token": false,
+        "gradient_checkpointing": false,
+        "lora_enable": false,
+        "mm_projector_lr": 0.0001,
+        "train_text_embedding": true
+    },
+    "act_head": {
+        "type": "LSTMDecoder",
+        "hidden_size": 1024,
+        "action_dim": 7,
+        "down_sample": "none",
+        "latent": 1,
+        "fwd_pred_next_n": 1,
+        "window_size": 1,
+        "action_space": "continuous",
+        "with_history": true,
+        "history_type": "post"
+    },
+    "fwd_head": null,
+    "tokenizer": {
+        "type": "AutoProcessor",
+        "pretrained_model_name_or_path": "/Users/minu/dev/Robot/RoboVLMs/.vlms/paligemma-3b-pt-224",
+        "tokenizer_type": "paligemma",
+        "max_text_len": 256,
+        "additional_special_tokens": null
+    },
+    "vlm": {
+        "type": "PaliGemmaForConditionalGeneration",
+        "pretrained_model_name_or_path": "/Users/minu/dev/Robot/RoboVLMs/.vlms/paligemma-3b-pt-224",
+        "name": "paligemma"
+    }
+}

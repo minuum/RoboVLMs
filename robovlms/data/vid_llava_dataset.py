@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import pathlib
-from turtle import pd
+import pandas as pd
 from typing import Dict, Optional, Sequence, List
 import torch
 import transformers

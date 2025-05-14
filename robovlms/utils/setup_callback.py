@@ -13,7 +13,7 @@ class SetupCallback(Callback):
         self.cfgdir = cfgdir
         self.config = config
 
-    def on_train_start(self, trainer, model):
+    def on_train_start(self, trainer, pl_module):
         if trainer.global_rank == 0:
             # Create logdirs and save configs
             os.makedirs(self.logdir, exist_ok=True)
@@ -29,3 +29,4 @@ class SetupCallback(Callback):
                 ),
                 indent=4,
             )
+        

@@ -1,0 +1,40 @@
+{
+    "robovlm_name": "RoboPaliGemma",
+    "parent": null,
+    "task_name": "paligemma_inference_mps",
+    "model": "paligemma",
+    "model_url": "google/paligemma-3b-mix-224", 
+    "image_size": 224,
+    "image_mean": [0.48145466, 0.4578275, 0.40821073],
+    "image_std": [0.26862954, 0.26130258, 0.27577711],
+    "seed": 123,
+    "cache_root": "runs/cache",
+    "model_load_source": "torch",
+    "vlm": {
+        "type": "AutoModelForVision2Seq",
+        "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+        "name": "paligemma_3b"
+    },
+    "tokenizer": {
+        "type": "AutoProcessor",
+        "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+        "tokenizer_type": "auto",
+        "max_text_len": 128,
+        "additional_special_tokens": ["<image>"]
+    },
+    "act_head": {
+        "type": "MLPHead",
+        "input_dim": 2048,
+        "output_dim": 8,
+        "hidden_dim": 1024,
+        "n_layers": 2,
+        "dropout": 0.1,
+        "activation": "relu"
+    },
+    "trainer": {
+        "accelerator": "mps",
+        "precision": "32-true",
+        "logger": false,
+        "log_every_n_steps": 0 
+    }
+} 

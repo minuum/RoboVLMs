@@ -1,4 +1,3 @@
-
 #  | *RoboVLMs* | Towards Generalist Robot Policies: <br>What Matters in Building Vision-Language-Action Models
 
 <a href="https://arxiv.org/abs/2412.14058" target="_blank">
