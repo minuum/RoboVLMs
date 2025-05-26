@@ -27,7 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ROS 2 Humble 설치를 위한 단일 RUN 레이어
-RUN apt-get update && \
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true && \
     # ROS 2 GPG 키 추가
     curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     # ROS 2 저장소 추가
@@ -42,7 +43,6 @@ RUN apt-get update && \
         python3-rosdep \
         ros-humble-cv-bridge \
         python3-opencv \
-        ros-humble-audio-common \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
