@@ -21,7 +21,7 @@ class WhisperSTTNode(Node):
         self.subscription  # prevent unused variable warning
 
         # Whisper 모델 로드
-        self.model_name = "TheoJo/whisper-tiny-ko"
+        self.model_name = "TheoJo/whisper-tiny-kos"
         self.get_logger().info(f"Whisper 모델 로딩: {self.model_name}")
         try:
             self.processor = WhisperProcessor.from_pretrained(self.model_name)
