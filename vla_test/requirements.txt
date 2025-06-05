@@ -1,0 +1,20 @@
+torch>=2.0.0
+transformers>=4.35.0
+pillow>=9.0.0
+opencv-python>=4.5.0
+numpy>=1.21.0
+accelerate>=0.20.0
+safetensors>=0.3.0
+huggingface-hub>=0.15.0
+
+# VLA 모델 관련
+# torch-audio  # 필요시 주석 해제
+# torchaudio   # 필요시 주석 해제
+
+# 최적화 라이브러리
+# bitsandbytes>=0.41.0  # 양자화 지원
+# flash-attn>=2.0.0     # Flash Attention 지원
+
+# 개발/디버깅 도구
+tqdm>=4.64.0
+requests>=2.28.0 

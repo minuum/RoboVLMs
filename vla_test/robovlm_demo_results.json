@@ -1,0 +1,86 @@
+{
+  "continuous_parsing": [
+    {
+      "instruction": "Move forward to the table",
+      "action_type": "move",
+      "linear_x": 0.3248656094074249,
+      "linear_y": -0.05491971969604492,
+      "angular_z": -0.06080198660492897,
+      "gripper": 0.0,
+      "confidence": 0.8693514287471771,
+      "is_safe": true
+    },
+    {
+      "instruction": "Turn left slowly",
+      "action_type": "turn",
+      "linear_x": -0.006586096715182066,
+      "linear_y": 0.018286118283867836,
+      "angular_z": 0.5105820298194885,
+      "gripper": 0.0518939346075058,
+      "confidence": 0.9032929062843322,
+      "is_safe": true
+    },
+    {
+      "instruction": "Grab the red cup carefully",
+      "action_type": "grab",
+      "linear_x": 0.09409098327159882,
+      "linear_y": 0.041182029992341995,
+      "angular_z": -0.010737845674157143,
+      "gripper": 0.9455451369285583,
+      "confidence": 0.9908831596374511,
+      "is_safe": true
+    },
+    {
+      "instruction": "Navigate around the obstacle",
+      "action_type": "navigate",
+      "linear_x": 0.21348638832569122,
+      "linear_y": 0.08494393527507782,
+      "angular_z": 0.2709798216819763,
+      "gripper": 0.08863434195518494,
+      "confidence": 0.8771040201187134,
+      "is_safe": true
+    },
+    {
+      "instruction": "테이블로 전진하세요",
+      "action_type": "move",
+      "linear_x": 0.29525354504585266,
+      "linear_y": 0.06243151053786278,
+      "angular_z": 0.008324593305587769,
+      "gripper": 0.06919972598552704,
+      "confidence": 0.8668295681476592,
+      "is_safe": true
+    },
+    {
+      "instruction": "천천히 우회전하세요",
+      "action_type": "turn",
+      "linear_x": 0.06211001053452492,
+      "linear_y": 0.017456617206335068,
+      "angular_z": -0.5295253992080688,
+      "gripper": 0.02957458607852459,
+      "confidence": 0.9071435332298278,
+      "is_safe": true
+    },
+    {
+      "instruction": "빨간 컵을 조심스럽게 잡으세요",
+      "action_type": "unknown",
+      "linear_x": 0.11165329813957214,
+      "linear_y": 0.008952519856393337,
+      "angular_z": -0.005251067690551281,
+      "gripper": 1.0,
+      "confidence": 0.9999999999999999,
+      "is_safe": true
+    }
+  ],
+  "statistics": {
+    "total_tests": 7,
+    "safe_actions": 7,
+    "avg_confidence": 0.9163720880235944,
+    "action_type_distribution": {
+      "move": 2,
+      "turn": 2,
+      "grab": 1,
+      "navigate": 1,
+      "unknown": 1
+    }
+  }
+}

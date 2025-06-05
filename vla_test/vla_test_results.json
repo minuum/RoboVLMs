@@ -1,0 +1,123 @@
+{
+  "basic_tests": {
+    "total_tests": 6,
+    "successful_predictions": 0,
+    "safe_actions": 6,
+    "results": [
+      {
+        "instruction": "Move forward slowly",
+        "category": "navigation",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0.3, 0. , 0. ]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='move', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      },
+      {
+        "instruction": "Turn left and stop",
+        "category": "navigation",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0. , 0. , 0.5]), gripper=0.0, action_type='turn', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      },
+      {
+        "instruction": "Pick up the red cup",
+        "category": "manipulation",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0.1, 0. , 0. ]), rotation=array([0., 0., 0.]), gripper=1.0, action_type='grab', confidence=0.6, control_mode=<RobotControl.POSITION: 'position'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      },
+      {
+        "instruction": "Put the object on the table",
+        "category": "manipulation",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='release', confidence=0.6, control_mode=<RobotControl.POSITION: 'position'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      },
+      {
+        "instruction": "전진하세요",
+        "category": "navigation_kr",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0.3, 0. , 0. ]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='move', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      },
+      {
+        "instruction": "물건을 잡아주세요",
+        "category": "manipulation_kr",
+        "result": {
+          "success": false,
+          "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='unknown', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+          "raw_output": null,
+          "confidence": 0.6,
+          "is_safe": true,
+          "fallback": true
+        }
+      }
+    ]
+  },
+  "sequence_tests": {
+    "sequence_length": 4,
+    "results": [
+      {
+        "success": false,
+        "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='move', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+        "raw_output": null,
+        "confidence": 0.6,
+        "is_safe": true,
+        "fallback": true
+      },
+      {
+        "success": false,
+        "action": "RoboAction(translation=array([0.1, 0. , 0. ]), rotation=array([0., 0., 0.]), gripper=1.0, action_type='grab', confidence=0.6, control_mode=<RobotControl.POSITION: 'position'>, sequence_length=1, prediction_horizon=1)",
+        "raw_output": null,
+        "confidence": 0.6,
+        "is_safe": true,
+        "fallback": true
+      },
+      {
+        "success": false,
+        "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='unknown', confidence=0.6, control_mode=<RobotControl.VELOCITY: 'velocity'>, sequence_length=1, prediction_horizon=1)",
+        "raw_output": null,
+        "confidence": 0.6,
+        "is_safe": true,
+        "fallback": true
+      },
+      {
+        "success": false,
+        "action": "RoboAction(translation=array([0., 0., 0.]), rotation=array([0., 0., 0.]), gripper=0.0, action_type='release', confidence=0.6, control_mode=<RobotControl.POSITION: 'position'>, sequence_length=1, prediction_horizon=1)",
+        "raw_output": null,
+        "confidence": 0.6,
+        "is_safe": true,
+        "fallback": true
+      }
+    ]
+  },
+  "model_info": {
+    "name": "openvla/openvla-7b",
+    "device": "mps",
+    "loaded": true
+  }
+}
