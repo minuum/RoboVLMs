@@ -283,7 +283,8 @@ class BaseTrainer(pl.LightningModule):
 
         clip_l1 = prediction.get("text_l1_clip", None)
 
-        loss = torch.tensor(0.0).to(self.device)
+        # Use tensor with requires_grad=True to avoid gradient error
+        loss = torch.tensor(0.0, requires_grad=True).to(self.device)
         if self.act_pred:
             loss_act = (loss_arm_act if loss_arm_act is not None else 0) + (
                 loss_gripper_act * self.arm_gripper_loss_ratio

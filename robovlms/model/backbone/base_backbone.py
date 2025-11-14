@@ -493,7 +493,7 @@ class BaseRoboVLM(nn.Module):
             self.word_embedding.register_forward_hook(make_inputs_require_grad)
 
         if self.train_setup_configs["lora_enable"]:
-            from llava.train.train import find_all_linear_names
+            from robovlms.utils.lora_utils import find_all_linear_names
             from peft import LoraConfig, get_peft_model
 
             lora_config = LoraConfig(
