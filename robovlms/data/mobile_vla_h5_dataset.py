@@ -87,16 +87,31 @@ class MobileVLAH5Dataset(Dataset):
         print(f"  train_split: {train_split}")
         print(f"  is_training: {not is_validation}")
         
-        # 토크나이저는 나중에 외부에서 설정됨
-        self.tokenizer = None
+        # 토크나이저 및 text_fn 초기화
+        self.tokenizer = kwargs.get("tokenizer", None)
+        self.tokenizer_config = kwargs.get("tokenizer_config", None)
         self.model_name = model_name
+        self.window_size = window_size
+        self.action_chunk_size = action_chunk_size  # 사용하지 않음 (호환성 유지)
+        self.fwd_pred_next_n = kwargs.get("fwd_pred_next_n", action_chunk_size)  # kwargs에서 가져오기
+        
+        # text_fn 초기화 (tokenizer_config가 있으면)
+        if self.tokenizer_config is not None and self.tokenizer is not None:
+            from robovlms.data.data_utils import get_text_function
+            tokenizer_type = self.tokenizer_config.get("tokenizer_type", "kosmos")
+            max_text_len = self.tokenizer_config.get("max_text_len", 256)
+            self.text_fn = get_text_function(self.tokenizer, tokenizer_type, max_text_len)
+        else:
+            self.text_fn = None
     
     def __len__(self):
-        # 각 에피소드에서 window_size + action_chunk_size 만큼의 프레임이 필요
+        # 각 에피소드에서 window_size + fwd_pred_next_n 만큼의 프레임이 필요
+        # RoboVLMs 구조: 8 + 10 = 18 프레임
+        total_frames_needed = self.window_size + self.fwd_pred_next_n
         valid_frames = 0
         for length in self.episode_lengths:
-            if length >= self.window_size + self.action_chunk_size:
-                valid_frames += length - self.window_size - self.action_chunk_size + 1
+            if length >= total_frames_needed:
+                valid_frames += length - total_frames_needed + 1
         return max(1, valid_frames)
     
     def _find_episode_and_frame(self, idx):
@@ -110,12 +125,13 @@ class MobileVLAH5Dataset(Dataset):
     
     def __getitem__(self, idx):
         # 에피소드와 프레임 인덱스 찾기
+        # RoboVLMs 구조: window_size + fwd_pred_next_n = 8 + 10 = 18 프레임
+        total_frames_needed = self.window_size + self.fwd_pred_next_n
         ep_idx = 0
         frame_idx = idx
-        cumsum = 0
         for i, length in enumerate(self.episode_lengths):
-            if length >= self.window_size + self.action_chunk_size:
-                valid_frames = length - self.window_size - self.action_chunk_size + 1
+            if length >= total_frames_needed:
+                valid_frames = length - total_frames_needed + 1
                 if frame_idx < valid_frames:
                     ep_idx = i
                     break
@@ -123,9 +139,10 @@ class MobileVLAH5Dataset(Dataset):
         
         # HDF5 파일 로드
         with h5py.File(self.episode_files[ep_idx], 'r') as f:
-            # 이미지 로드 (window_size 프레임)
+            # 이미지 로드 (window_size + fwd_pred_next_n 프레임)
+            # DiskCalvinDataset과 동일한 구조: 전체 시퀀스 로드
             images = []
-            for t in range(frame_idx, frame_idx + self.window_size):
+            for t in range(frame_idx, frame_idx + total_frames_needed):
                 img_array = f['images'][t]  # 'observations/images' -> 'images'
                 # (H, W, C) -> PIL Image
                 img = Image.fromarray(img_array.astype(np.uint8))
@@ -133,36 +150,31 @@ class MobileVLAH5Dataset(Dataset):
                 img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
                 # PIL -> numpy -> tensor
                 img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
-                # (H, W, C) -> (C, H, W)
+                # (C, H, W)
                 img_tensor = img_tensor.permute(2, 0, 1)
                 images.append(img_tensor)
             
-            # 액션 로드 (window_size x action_chunk_size 프레임)
-            # RoboVLMs는 각 window frame마다 future action chunk를 기대
-            # Shape: (window_size, action_chunk_size, 7)
+            # 액션 로드 (window_size + fwd_pred_next_n 프레임)
+            # DiskCalvinDataset과 동일: 시퀀스 형태로 반환
+            # Shape: (window_size + fwd_pred_next_n, 2)
             actions = []
-            for w in range(self.window_size):
-                window_actions = []
-                for t in range(frame_idx + w, frame_idx + w + self.action_chunk_size):
-                    if t < len(f['actions']):
-                        action_2d = f['actions'][t][:2]  # linear_x, linear_y만 사용
-                        # 7D로 패딩: [linear_x, linear_y, 0, 0, 0, 0, gripper]
-                        action = np.zeros(7)
-                        action[:2] = action_2d
-                        action[6] = 0.0  # gripper는 항상 0 (열림)
-                    else:
-                        action = np.zeros(7)  # 패딩
-                    window_actions.append(action)
-                actions.append(window_actions)
+            for t in range(frame_idx, frame_idx + total_frames_needed):
+                if t < len(f['actions']):
+                    action_2d = f['actions'][t][:2]  # linear_x, linear_y만 사용
+                    # 2D 액션 그대로 사용 (패딩 없음)
+                    action = action_2d.copy()
+                else:
+                    action = np.zeros(2)  # 패딩 (2D)
+                actions.append(action)
             
             # 언어 명령 로드 (기본 명령 사용)
             language = "Navigate to the target location"  # 기본 명령
         
         # 텐서 변환
-        images_tensor = torch.stack(images)  # (window_size, C, H, W)
-        actions_tensor = torch.from_numpy(np.array(actions)).float()  # (window_size, action_chunk_size, 7)
+        images_tensor = torch.stack(images)  # (window_size + fwd_pred_next_n, C, H, W)
+        actions_tensor = torch.from_numpy(np.array(actions)).float()  # (window_size + fwd_pred_next_n, 2)
         
-        # 액션 정규화 [-1, 1]
+        # 액션 정규화 [-1, 1] (2D 액션 기준)
         actions_tensor = torch.clamp(actions_tensor, -1.0, 1.0)
         
         # 언어 토크나이징 (간단한 더미 토큰 사용)
@@ -171,19 +183,91 @@ class MobileVLAH5Dataset(Dataset):
         attention_mask = torch.ones(256, dtype=torch.long)  # 더미
         
         # RoboVLMs 형식에 맞춰 반환 (배치 전 개별 샘플)
+        # DiskCalvinDataset과 동일한 구조: 시퀀스 형태로 반환
         # CRITICAL: data_source must contain 'action' for forward_action to be called!
         return {
-            'rgb': images_tensor,  # (window_size, C, H, W)
+            'rgb': images_tensor,  # (window_size + fwd_pred_next_n, C, H, W)
             'hand_rgb': torch.zeros_like(images_tensor),  # 더미 gripper 이미지
-            'action': actions_tensor,  # (window_size, action_chunk_size, 7)
+            'actions': actions_tensor,  # (window_size + fwd_pred_next_n, 2) - DiskCalvinDataset과 동일
+            'action_mask': torch.ones(total_frames_needed),  # (window_size + fwd_pred_next_n,)
+            'image_mask': torch.ones(total_frames_needed),  # (window_size + fwd_pred_next_n,)
             'text': input_ids,  # (seq_len,)
             'text_mask': attention_mask,  # (seq_len,)
-            'action_chunck': actions_tensor,  # (window_size, action_chunk_size, 7)
-            'chunck_mask': torch.ones(self.window_size, self.action_chunk_size),  # (window_size, action_chunk_size)
-            'fwd_rgb_chunck': None,
-            'fwd_hand_rgb_chunck': None,
-            'fwd_mask': None,
+            'lang': language,  # DiskCalvinDataset과 동일한 키 이름
             'raw_text': language,
             'data_source': 'mobile_vla_action',  # Must contain 'action'!
+            'attention_mask': torch.ones(total_frames_needed),  # 이미지 마스크 (모두 유효)
         }
+    
+    def collater(self, data):
+        """
+        배치 데이터를 처리하는 collater 메서드
+        DiskCalvinDataset의 collater를 참고하여 구현
+        """
+        # 액션 텐서 스택 (DiskCalvinDataset과 동일한 구조)
+        # s["actions"]는 (window_size + fwd_pred_next_n, 2) 형태
+        action_tensors = torch.from_numpy(
+            np.array([s["actions"].numpy() for s in data])
+        )[:, :-1]  # 마지막 프레임 제거 (DiskCalvinDataset과 동일)
+        # Shape: (B, window_size + fwd_pred_next_n - 1, 2)
+        
+        # 액션 마스크 스택
+        action_mask = torch.from_numpy(
+            np.array([s["action_mask"].numpy() for s in data])
+        )[:, :-1]  # 마지막 프레임 제거
+        
+        # 이미지 텐서 스택
+        image_tensors = torch.stack([s["rgb"] for s in data], dim=0)  # (B, window_size + fwd_pred_next_n, C, H, W)
+        
+        # 이미지 마스크 스택
+        image_mask = torch.from_numpy(
+            np.array([s["image_mask"].numpy() for s in data])
+        )
+        
+        # Gripper 이미지 스택 (더미)
+        gripper_tensors = torch.stack([s["hand_rgb"] for s in data], dim=0)  # (B, window_size + fwd_pred_next_n, C, H, W)
+        
+        # 언어 토크나이징 (text_fn 사용)
+        stacked_language = [s["lang"] for s in data]
+        if self.text_fn is not None:
+            text_tensors, attention_mask = self.text_fn(stacked_language)
+        else:
+            # text_fn이 없으면 더미 사용 (초기화 시점)
+            text_tensors = torch.stack([s["text"] for s in data], dim=0)
+            attention_mask = torch.stack([s["text_mask"] for s in data], dim=0)
+        
+        # DiskCalvinDataset과 동일한 방식으로 chunk 생성 (unfold 사용)
+        image_chunk = image_tensors.unfold(1, self.fwd_pred_next_n, 1).permute(
+            0, 1, 5, 2, 3, 4
+        )[:, 1:]  # 첫 번째 제거
+        image_tensors = image_tensors[:, : self.window_size]  # window_size만 사용
+        
+        gripper_chunk = gripper_tensors.unfold(1, self.fwd_pred_next_n, 1).permute(
+            0, 1, 5, 2, 3, 4
+        )[:, 1:]
+        gripper_tensors = gripper_tensors[:, : self.window_size]
+        
+        fwd_mask = image_mask.unfold(1, self.fwd_pred_next_n, 1)[:, 1:]
+        
+        # 액션 chunk 생성 (unfold 사용)
+        action_chunck = action_tensors.unfold(1, self.fwd_pred_next_n, 1).permute(
+            0, 1, 3, 2
+        )
+        action_mask = action_mask.unfold(1, self.fwd_pred_next_n, 1)
+        
+        res = {
+            "rgb": image_tensors,  # (B, window_size, C, H, W)
+            "hand_rgb": gripper_tensors,  # (B, window_size, C, H, W)
+            "action": action_tensors,  # (B, window_size + fwd_pred_next_n - 1, 2)
+            "text": text_tensors,  # (B, seq_len)
+            "text_mask": attention_mask,  # (B, seq_len)
+            "fwd_rgb_chunck": image_chunk,  # (B, window_size + fwd_pred_next_n - 2, fwd_pred_next_n, C, H, W)
+            "fwd_hand_rgb_chunck": gripper_chunk,  # (B, window_size + fwd_pred_next_n - 2, fwd_pred_next_n, C, H, W)
+            "fwd_mask": fwd_mask,  # (B, window_size + fwd_pred_next_n - 2, fwd_pred_next_n)
+            "action_chunck": action_chunck,  # (B, window_size + fwd_pred_next_n - 2, fwd_pred_next_n, 2)
+            "chunck_mask": action_mask,  # (B, window_size + fwd_pred_next_n - 2, fwd_pred_next_n)
+            "raw_text": stacked_language,  # List[str]
+            "data_source": "mobile_vla_action",
+        }
+        return res
 
