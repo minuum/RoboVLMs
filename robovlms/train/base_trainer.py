@@ -268,7 +268,12 @@ class BaseTrainer(pl.LightningModule):
 
     def _get_loss(self, prediction):
         # print(prediction)
-        loss_arm_act = prediction.get("loss_arm_act", None)
+        # Mobile VLA는 loss_velocity_act 사용, 기존 코드는 loss_arm_act 사용
+        loss_velocity_act = prediction.get("loss_velocity_act", None)
+        loss_arm_act = prediction.get("loss_arm_act", None)  # 기존 코드 호환성
+        # loss_velocity_act가 있으면 우선 사용, 없으면 loss_arm_act 사용
+        loss_arm_act = loss_velocity_act if loss_velocity_act is not None else loss_arm_act
+        
         loss_gripper_act = prediction.get("loss_gripper_act", None)
         loss_obs = prediction.get("loss_obs_fwd", None)
         loss_hand_obs = prediction.get("loss_hand_obs_fwd", None)

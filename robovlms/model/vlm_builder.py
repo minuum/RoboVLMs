@@ -33,7 +33,17 @@ def build_vlm(vlm_config, tokenizer_config, precision="bf16"):
             use_flash_attn=False,
             device_map="cpu",
         )
+    elif model_name == "kosmos":
+        # Kosmos-2: load from transformers.models.kosmos2.modeling_kosmos2 directly
+        from transformers.models.kosmos2.modeling_kosmos2 import Kosmos2ForConditionalGeneration
+        model = Kosmos2ForConditionalGeneration.from_pretrained(
+            model_path, trust_remote_code=True
+        )
+        tokenizer = build_tokenizer(tokenizer_config)
     else:
+        # Handle deprecated AutoModelForVision2Seq -> AutoModelForImageTextToText
+        if model_type == "AutoModelForVision2Seq":
+            model_type = "AutoModelForImageTextToText"
         model = getattr(transformers, model_type).from_pretrained(
             model_path, trust_remote_code=True
         )

@@ -505,6 +505,15 @@ class BaseRoboVLM(nn.Module):
                 task_type="CAUSAL_LM",
             )
             print("Adding LoRA adapters...")
+            # For Kosmos2, add prepare_inputs_for_generation if it doesn't exist
+            # This is needed for PEFT compatibility
+            if not hasattr(model, 'prepare_inputs_for_generation'):
+                # Add a dummy method if the model doesn't have it
+                def prepare_inputs_for_generation(self, input_ids, **kwargs):
+                    return {"input_ids": input_ids, **kwargs}
+                import types
+                model.prepare_inputs_for_generation = types.MethodType(prepare_inputs_for_generation, model)
+            
             self.model = get_peft_model(model, lora_config)
         # import pdb; pdb.set_trace()
         if self.train_setup_configs.get("train_text_embedding", False):
@@ -549,7 +558,7 @@ class BaseRoboVLM(nn.Module):
         _keys = list(loss.keys())
 
         for k in _keys:
-            if "loss" in k:
+            if "loss" in k and loss[k] is not None:
                 _loss += loss[k]
 
         loss["loss"] = _loss
@@ -1112,17 +1121,133 @@ class BaseRoboVLM(nn.Module):
                     multimodal_attention_mask, "(b l) n -> b (l n)", l=seq_len
                 )
 
-        output = self.model(
-            input_ids=None,
-            attention_mask=multimodal_attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=multimodal_embeds,
-            use_cache=use_cache,
-            output_hidden_states=True,
-        )
+        try:
+            output = self.model(
+                input_ids=None,
+                attention_mask=multimodal_attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=multimodal_embeds,
+                use_cache=use_cache,
+                output_hidden_states=True,
+            )
+        except ValueError as e:
+            # Some backbones (e.g., Kosmos-2) require pixel_values or image_embeds.
+            # Fall back to passing pixel_values directly for Kosmos
+            if "pixel_values" in str(e) or "image_embeds" in str(e):
+                # vision_x is shaped as (bs*seq, 1, C, H, W) for history_type in [pre, post]
+                # Use pixel_values pathway for Kosmos
+                if vision_x.ndim == 5 and vision_x.shape[1] == 1:
+                    pixel_values = vision_x.squeeze(1)  # (bs*seq, C, H, W)
+                else:
+                    pixel_values = vision_x
+                
+                # For Kosmos, we need to create image_embeds_position_mask with proper shape
+                # Get number of image tokens from model config (typically 64 for Kosmos-2)
+                num_image_tokens = getattr(self.model.config, 'latent_query_num', 64)
+                
+                # Store original lang_x length for later use (to trim output_hs)
+                original_lang_x_len = lang_x.shape[1] if lang_x.sum() != 0 else 3
+                
+                # Pre-encode images to get image_embeds with proper dtype control
+                # This avoids dtype mismatch issues in forward_embedding
+                if hasattr(self, 'model_encode_images'):
+                    # Use model_encode_images to get image_embeds directly
+                    image_embeds = self.model_encode_images(pixel_values)  # (bs*seq, num_tokens, hidden_size)
+                    # Ensure image_embeds matches the expected dtype (float32 to avoid Half/Float mismatch)
+                    # Get the dtype from the model's text embedding layer
+                    expected_dtype = next(self.model.text_model.model.embed_tokens.parameters()).dtype
+                    if image_embeds.dtype != expected_dtype:
+                        image_embeds = image_embeds.to(expected_dtype)
+                else:
+                    # Fallback: ensure pixel_values is in float32
+                    if pixel_values.dtype != torch.float32:
+                        pixel_values = pixel_values.to(torch.float32)
+                    image_embeds = None
+                
+                if lang_x.sum() == 0:  # All zeros (dummy)
+                    batch_size = lang_x.shape[0]
+                    # Create input_ids with enough length to accommodate image tokens
+                    # Pad to at least num_image_tokens length
+                    dummy_input_ids = torch.ones((batch_size, max(3, num_image_tokens)), dtype=torch.long, device=lang_x.device)
+                    dummy_input_ids[:, 0] = 0  # BOS token
+                    if dummy_input_ids.shape[1] > 1:
+                        dummy_input_ids[:, 1] = 1  # Word token
+                    if dummy_input_ids.shape[1] > 2:
+                        dummy_input_ids[:, 2] = 2  # EOS token
+                    # Fill remaining positions with padding token (0)
+                    if dummy_input_ids.shape[1] > 3:
+                        dummy_input_ids[:, 3:] = 0
+                    simple_attention_mask = torch.ones((batch_size, dummy_input_ids.shape[1]), dtype=torch.bool, device=lang_x.device)
+                    padded_length = dummy_input_ids.shape[1]
+                else:
+                    dummy_input_ids = lang_x
+                    simple_attention_mask = attention_mask
+                    # Pad if needed to accommodate image tokens
+                    batch_size, seq_len = dummy_input_ids.shape
+                    padded_length = seq_len
+                    if seq_len < num_image_tokens:
+                        pad_length = num_image_tokens - seq_len
+                        dummy_input_ids = torch.cat([
+                            dummy_input_ids,
+                            torch.zeros((batch_size, pad_length), dtype=torch.long, device=dummy_input_ids.device)
+                        ], dim=1)
+                        simple_attention_mask = torch.cat([
+                            simple_attention_mask,
+                            torch.zeros((batch_size, pad_length), dtype=torch.bool, device=simple_attention_mask.device)
+                        ], dim=1)
+                        padded_length = dummy_input_ids.shape[1]
+                
+                # Create image_embeds_position_mask: first num_image_tokens positions should be True
+                batch_size, seq_len = dummy_input_ids.shape
+                image_embeds_position_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=pixel_values.device)
+                image_embeds_position_mask[:, :num_image_tokens] = True  # First num_image_tokens positions for image embeddings
+                
+                # Call model with image_embeds (if available) or pixel_values
+                if image_embeds is not None:
+                    # Pass pre-encoded image_embeds directly
+                    output = self.model(
+                        image_embeds=image_embeds,
+                        input_ids=dummy_input_ids,
+                        attention_mask=simple_attention_mask,
+                        image_embeds_position_mask=image_embeds_position_mask,
+                        position_ids=position_ids,
+                        past_key_values=past_key_values,
+                        use_cache=use_cache,
+                        output_hidden_states=True,
+                    )
+                else:
+                    # Fallback: use pixel_values
+                    output = self.model(
+                        pixel_values=pixel_values,
+                        input_ids=dummy_input_ids,
+                        attention_mask=simple_attention_mask,
+                        image_embeds_position_mask=image_embeds_position_mask,
+                        position_ids=position_ids,
+                        past_key_values=past_key_values,
+                        use_cache=use_cache,
+                        output_hidden_states=True,
+                    )
+                
+                # Store padded_length for later use in trimming output_hs
+                self._kosmos_padded_length = padded_length
+                self._kosmos_original_length = original_lang_x_len
+                
+            else:
+                raise e
 
         output_hs = output.hidden_states[-1].clone()
+        
+        # For Kosmos: adjust action_token_mask to account for image tokens at the beginning
+        # Image tokens are inserted at positions 0:num_image_tokens, so action_token_mask needs offset
+        kosmos_image_offset = 0
+        if hasattr(self, '_kosmos_padded_length') and hasattr(self, '_kosmos_original_length'):
+            num_image_tokens = getattr(self.model.config, 'latent_query_num', 64)
+            kosmos_image_offset = num_image_tokens
+            # Clean up temporary attributes
+            delattr(self, '_kosmos_padded_length')
+            delattr(self, '_kosmos_original_length')
+        
         if history_type == "pre":
             multimodal_embeds = rearrange(
                 multimodal_embeds, "b (l n) d -> (b l) n d", l=seq_len
@@ -1134,6 +1259,40 @@ class BaseRoboVLM(nn.Module):
 
         if action_space == "continuous":
             # tmp_mask = torch.all(multimodal_embeds == self.action_token, dim=-1)
+            # For Kosmos: action_token_mask was created for text positions, but image tokens are at the beginning
+            # So we need to shift the mask by num_image_tokens positions
+            if kosmos_image_offset > 0 and action_token_mask.shape[1] <= output_hs.shape[1] - kosmos_image_offset:
+                # Shift action_token_mask to account for image tokens
+                # Pad with False at the beginning for image token positions
+                shifted_mask = torch.cat([
+                    torch.zeros((action_token_mask.shape[0], kosmos_image_offset), dtype=torch.bool, device=action_token_mask.device),
+                    action_token_mask
+                ], dim=1)
+                # Ensure the mask matches output_hs length
+                if shifted_mask.shape[1] < output_hs.shape[1]:
+                    # Pad with False at the end
+                    pad_length = output_hs.shape[1] - shifted_mask.shape[1]
+                    shifted_mask = torch.cat([
+                        shifted_mask,
+                        torch.zeros((shifted_mask.shape[0], pad_length), dtype=torch.bool, device=shifted_mask.device)
+                    ], dim=1)
+                elif shifted_mask.shape[1] > output_hs.shape[1]:
+                    # Trim to match output_hs
+                    shifted_mask = shifted_mask[:, :output_hs.shape[1]]
+                action_token_mask = shifted_mask
+            else:
+                # Ensure action_token_mask matches output_hs shape (non-Kosmos case or fallback)
+                if action_token_mask.shape[1] != output_hs.shape[1]:
+                    if action_token_mask.shape[1] > output_hs.shape[1]:
+                        action_token_mask = action_token_mask[:, :output_hs.shape[1]]
+                    else:
+                        # Pad with False
+                        pad_length = output_hs.shape[1] - action_token_mask.shape[1]
+                        action_token_mask = torch.cat([
+                            action_token_mask,
+                            torch.zeros((action_token_mask.shape[0], pad_length), dtype=torch.bool, device=action_token_mask.device)
+                        ], dim=1)
+            
             action_hs = output_hs[action_token_mask].reshape(
                 bs, seq_len, self.latent_num, -1
             )
