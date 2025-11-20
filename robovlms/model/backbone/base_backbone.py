@@ -1159,6 +1159,11 @@ class BaseRoboVLM(nn.Module):
                     expected_dtype = next(self.model.text_model.model.embed_tokens.parameters()).dtype
                     if image_embeds.dtype != expected_dtype:
                         image_embeds = image_embeds.to(expected_dtype)
+                    # Detach and clone, and set requires_grad=False explicitly to avoid in-place operation error
+                    # The model will use image_embeds to fill inputs_embeds, and detaching prevents
+                    # issues when the model tries to modify inputs_embeds in-place
+                    # detach() creates a leaf variable, and requires_grad_(False) ensures it can be modified in-place
+                    image_embeds = image_embeds.detach().clone().requires_grad_(False)
                 else:
                     # Fallback: ensure pixel_values is in float32
                     if pixel_values.dtype != torch.float32:
@@ -1203,24 +1208,73 @@ class BaseRoboVLM(nn.Module):
                 image_embeds_position_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=pixel_values.device)
                 image_embeds_position_mask[:, :num_image_tokens] = True  # First num_image_tokens positions for image embeddings
                 
-                # Call model with image_embeds (if available) or pixel_values
-                if image_embeds is not None:
-                    # Pass pre-encoded image_embeds directly
-                    output = self.model(
-                        image_embeds=image_embeds,
-                        input_ids=dummy_input_ids,
-                        attention_mask=simple_attention_mask,
-                        image_embeds_position_mask=image_embeds_position_mask,
-                        position_ids=position_ids,
-                        past_key_values=past_key_values,
-                        use_cache=use_cache,
-                        output_hidden_states=True,
-                    )
-                else:
-                    # Fallback: use pixel_values
+                # Always use pixel_values to avoid in-place operation errors
+                # Strategy: Manually create inputs_embeds and clone it to make it a non-leaf variable.
+                # This allows the Kosmos model to perform in-place operations (assigning image embeddings)
+                # without raising the "leaf Variable that requires grad" error.
+                
+                # 1. Ensure pixel_values is float32
+                if pixel_values.dtype != torch.float32:
+                    pixel_values = pixel_values.to(torch.float32)
+                
+                # 2. Create inputs_embeds manually from input_ids
+                # We need to access the text model's embedding layer
+                text_model = self.model.text_model
+                inputs_embeds = text_model.model.embed_tokens(dummy_input_ids)
+                
+                # 3. Clone inputs_embeds to make it a non-leaf variable (computed variable)
+                inputs_embeds = inputs_embeds.clone()
+                
+                # Initialize action_token_mask for Kosmos
+                batch_size, seq_len = inputs_embeds.shape[:2]
+                action_token_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=inputs_embeds.device)
+
+                # Add Action Token if needed
+                if self.use_act_queries:
+                    # Action query token 추가
+                    # (bs, 1, hidden_size)
+                    action_query = self.action_token.expand(batch_size, -1, -1)
+                    
+                    # Ensure dtype matches
+                    if action_query.dtype != inputs_embeds.dtype:
+                        action_query = action_query.to(inputs_embeds.dtype)
+
+                    inputs_embeds = torch.cat([inputs_embeds, action_query], dim=1)
+                    
+                    # Attention mask 확장
+                    if simple_attention_mask is not None:
+                        simple_attention_mask = torch.cat([
+                            simple_attention_mask,
+                            torch.ones((batch_size, 1), dtype=torch.bool, device=simple_attention_mask.device)
+                        ], dim=1)
+                    
+                    # image_embeds_position_mask 확장 (액션 토큰 위치는 이미지가 아님)
+                    if image_embeds_position_mask is not None:
+                        image_embeds_position_mask = torch.cat([
+                            image_embeds_position_mask,
+                            torch.zeros((batch_size, 1), dtype=torch.bool, device=image_embeds_position_mask.device)
+                        ], dim=1)
+
+                    # Action token mask 확장 및 설정
+                    action_token_mask = torch.cat([
+                        action_token_mask,
+                        torch.zeros((batch_size, 1), dtype=torch.bool, device=action_token_mask.device)
+                    ], dim=1)
+                    action_token_mask[:, -1] = True
+                    
+                    # Update padded_length
+                    padded_length += 1
+                
+                # 4. Detach pixel_values to be safe (though model will encode it)
+                pixel_values = pixel_values.detach().clone().requires_grad_(False)
+
+                # Disable AMP for this call to avoid dtype mismatch (Float vs Half)
+                import torch.cuda.amp as amp
+                with amp.autocast(enabled=False):
                     output = self.model(
                         pixel_values=pixel_values,
-                        input_ids=dummy_input_ids,
+                        input_ids=None, # inputs_embeds is passed, so input_ids is ignored for embedding lookup
+                        inputs_embeds=inputs_embeds, # Passing our safe, non-leaf inputs_embeds
                         attention_mask=simple_attention_mask,
                         image_embeds_position_mask=image_embeds_position_mask,
                         position_ids=position_ids,
@@ -1293,9 +1347,53 @@ class BaseRoboVLM(nn.Module):
                             torch.zeros((action_token_mask.shape[0], pad_length), dtype=torch.bool, device=action_token_mask.device)
                         ], dim=1)
             
-            action_hs = output_hs[action_token_mask].reshape(
-                bs, seq_len, self.latent_num, -1
-            )
+            # action_token_mask가 output_hs와 호환되는지 확인
+            if action_token_mask.shape[1] != output_hs.shape[1]:
+                # output_hs shape에 맞게 action_token_mask 조정
+                if action_token_mask.shape[1] > output_hs.shape[1]:
+                    action_token_mask = action_token_mask[:, :output_hs.shape[1]]
+                else:
+                    # Pad with False
+                    pad_length = output_hs.shape[1] - action_token_mask.shape[1]
+                    action_token_mask = torch.cat([
+                        action_token_mask,
+                        torch.zeros((action_token_mask.shape[0], pad_length), dtype=torch.bool, device=action_token_mask.device)
+                    ], dim=1)
+            
+            # action_token_mask에서 True인 위치 확인
+            if action_token_mask.sum() == 0:
+                # action_token_mask가 모두 False인 경우 - output_hs의 마지막 부분 사용
+                # output_hs shape: (bs*seq_len, seq_length, hidden_size)
+                # 마지막 latent_num 개의 토큰 사용
+                seq_length = output_hs.shape[1]  # 이미지 토큰 수 (64)
+                hidden_size = output_hs.shape[2]  # hidden_size (2048)
+                # output_hs.shape[0]에서 실제 seq_len 계산
+                actual_bs_seq_len = output_hs.shape[0]
+                # bs와 seq_len이 올바른지 확인
+                if actual_bs_seq_len != bs * seq_len:
+                    # output_hs.shape[0]에서 seq_len 역산
+                    inferred_seq_len = actual_bs_seq_len // bs if bs > 0 else actual_bs_seq_len
+                    print(f"WARNING: action_token_mask is all False. output_hs shape: {output_hs.shape}, bs={bs}, seq_len={seq_len} (inferred={inferred_seq_len}), seq_length={seq_length}, Using last {self.latent_num} tokens from output_hs.")
+                    seq_len = inferred_seq_len
+                else:
+                    print(f"WARNING: action_token_mask is all False. output_hs shape: {output_hs.shape}, bs={bs}, seq_len={seq_len}, seq_length={seq_length}, Using last {self.latent_num} tokens from output_hs.")
+                # output_hs를 (bs, seq_len, seq_length, hidden_size)로 reshape
+                # output_hs.shape[0] = bs*seq_len, output_hs.shape[1] = seq_length (이미지 토큰 수)
+                if output_hs.shape[0] == bs * seq_len:
+                    # output_hs: (bs*seq_len, seq_length, hidden_size) -> (bs, seq_len, seq_length, hidden_size)
+                    output_hs_reshaped = output_hs.view(bs, seq_len, seq_length, hidden_size)
+                    # 마지막 latent_num 개의 토큰 사용: (bs, seq_len, latent_num, hidden_size)
+                    action_hs = output_hs_reshaped[:, :, -self.latent_num:, :]
+                    print(f"DEBUG: action_hs shape after reshape: {action_hs.shape}, expected: (bs={bs}, seq_len={seq_len}, latent_num={self.latent_num}, hidden_size={hidden_size})")
+                else:
+                    # fallback: output_hs의 마지막 latent_num 개의 토큰 사용
+                    action_hs = output_hs[:, -self.latent_num:].view(
+                        bs, seq_len, self.latent_num, hidden_size
+                    )
+            else:
+                action_hs = output_hs[action_token_mask].reshape(
+                    bs, seq_len, self.latent_num, -1
+                )
 
         elif action_space == "down_sample":
             action_hs = output_hs

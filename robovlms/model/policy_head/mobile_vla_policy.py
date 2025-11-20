@@ -82,19 +82,28 @@ class MobileVLALSTMDecoder(BasePolicyHead):
             None: gripper 없음 (BasePolicyHead.loss 호환성을 위해)
         """
         # Down sample 처리 (LSTMDecoder와 동일)
-        if self.down_sample == "pooling":
-            bs, seq_len = tok_seq.shape[:2]
-            tok_seq = rearrange(tok_seq, "b l n d-> (b l) n d")
-            tok_seq = self.global_1d_pool(
-                tok_seq.permute(0, 2, 1)
-            )  # bs*seq_len, n_tok, tok_dim -> bs*seq_len, tok_dim
-            tok_seq = rearrange(tok_seq, "(b l) d n -> b l (n d)", b=bs, l=seq_len)
-        elif self.down_sample == "resampler":
-            raise NotImplementedError
-        elif self.down_sample == "none":
-            tok_seq = rearrange(tok_seq, "b l n d-> b l (n d)")
+        # tok_seq shape 확인 및 처리
+        if len(tok_seq.shape) == 4:
+            # (B, seq_len, latent_num, feature_dim)
+            if self.down_sample == "pooling":
+                bs, seq_len = tok_seq.shape[:2]
+                tok_seq = rearrange(tok_seq, "b l n d-> (b l) n d")
+                tok_seq = self.global_1d_pool(
+                    tok_seq.permute(0, 2, 1)
+                )  # bs*seq_len, n_tok, tok_dim -> bs*seq_len, tok_dim
+                tok_seq = rearrange(tok_seq, "(b l) d n -> b l (n d)", b=bs, l=seq_len)
+            elif self.down_sample == "resampler":
+                raise NotImplementedError
+            elif self.down_sample == "none":
+                tok_seq = rearrange(tok_seq, "b l n d-> b l (n d)")
+            else:
+                raise NotImplementedError
+        elif len(tok_seq.shape) == 3:
+            # (B, seq_len, feature_dim) - 이미 flatten된 경우
+            # latent=1이므로 그대로 사용
+            pass
         else:
-            raise NotImplementedError
+            raise ValueError(f"Unexpected tok_seq shape: {tok_seq.shape}")
 
         # History memory 처리 (LSTMDecoder와 동일)
         if tok_seq.shape[1] == 1:
