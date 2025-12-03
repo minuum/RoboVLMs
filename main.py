@@ -181,40 +181,49 @@ def experiment(variant):
     true_model_path = os.path.join(".vlms", true_repo_name)
     print(f"DEBUG: Determined true_model_path: {true_model_path}")
 
-    # 2. variant의 모든 관련 경로를 true_model_path로 통일하여 강제 업데이트
-    original_model_path_in_variant = variant.get('model_path')
-    variant['model_path'] = true_model_path
-    variant['model_config'] = os.path.join(true_model_path, "config.json")
-    print(f"DEBUG: variant['model_path'] updated from '{original_model_path_in_variant}' to '{variant['model_path']}'")
+    # HuggingFace Hub URL인지 판단
+    model_url = variant.get("model_url", "") or ""
+    is_hf_hub = isinstance(model_url, str) and ("huggingface.co" in model_url)
 
-    if "tokenizer" in variant and isinstance(variant["tokenizer"], dict):
-        original_tokenizer_path = variant['tokenizer'].get('pretrained_model_name_or_path')
-        variant["tokenizer"]["pretrained_model_name_or_path"] = true_model_path
-        print(f"DEBUG: tokenizer path updated from '{original_tokenizer_path}' to '{true_model_path}'")
-    else:
-        print(f"DEBUG: tokenizer config not found or not a dict in variant.")
+    # 2. 경로 강제 업데이트는 로컬 모델만 대상으로 함 (HF Hub는 원격 ID 유지)
+    if not is_hf_hub:
+        original_model_path_in_variant = variant.get('model_path')
+        variant['model_path'] = true_model_path
+        variant['model_config'] = os.path.join(true_model_path, "config.json")
+        print(f"DEBUG: variant['model_path'] updated from '{original_model_path_in_variant}' to '{variant['model_path']}'")
 
-    if "vlm" in variant and isinstance(variant["vlm"], dict):
-        original_vlm_path = variant['vlm'].get('pretrained_model_name_or_path')
-        variant["vlm"]["pretrained_model_name_or_path"] = true_model_path
-        print(f"DEBUG: vlm path updated from '{original_vlm_path}' to '{true_model_path}'")
-    else:
-        print(f"DEBUG: vlm config not found or not a dict in variant.")
+        if "tokenizer" in variant and isinstance(variant["tokenizer"], dict):
+            original_tokenizer_path = variant['tokenizer'].get('pretrained_model_name_or_path')
+            variant["tokenizer"]["pretrained_model_name_or_path"] = true_model_path
+            print(f"DEBUG: tokenizer path updated from '{original_tokenizer_path}' to '{true_model_path}'")
+        else:
+            print(f"DEBUG: tokenizer config not found or not a dict in variant.")
+
+        if "vlm" in variant and isinstance(variant["vlm"], dict):
+            original_vlm_path = variant['vlm'].get('pretrained_model_name_or_path')
+            variant["vlm"]["pretrained_model_name_or_path"] = true_model_path
+            print(f"DEBUG: vlm path updated from '{original_vlm_path}' to '{true_model_path}'")
+        else:
+            print(f"DEBUG: vlm config not found or not a dict in variant.")
 
     # 3. 모델 다운로드 (이제 통일되고 업데이트된 variant['model_path'] 기준)
-    if not os.path.exists(variant['model_path']):
-        if variant.get("model_url"): 
-            print(
-                f"VLM backbone not found at {variant['model_path']}. Cloning {variant.get('model', true_repo_name)} from {variant['model_url']} into {variant['model_path']}..."
-            )
-            os.makedirs(os.path.dirname(variant['model_path']), exist_ok=True)
-            os.system(f"git clone {variant['model_url']} {variant['model_path']}")
+    # 3. 모델 다운로드/준비
+    if not is_hf_hub:
+        if not os.path.exists(variant['model_path']):
+            if variant.get("model_url"):
+                print(
+                    f"VLM backbone not found at {variant['model_path']}. Cloning {variant.get('model', true_repo_name)} from {variant['model_url']} into {variant['model_path']}..."
+                )
+                os.makedirs(os.path.dirname(variant['model_path']), exist_ok=True)
+                os.system(f"git clone {variant['model_url']} {variant['model_path']}")
+            else:
+                error_msg = f"Model not found at {variant['model_path']} and model_url is not provided. Cannot download."
+                print(f"ERROR: {error_msg}")
+                raise FileNotFoundError(error_msg)
         else:
-            error_msg = f"Model not found at {variant['model_path']} and model_url is not provided. Cannot download."
-            print(f"ERROR: {error_msg}")
-            raise FileNotFoundError(error_msg)
+            print(f"DEBUG: Model already exists at {variant['model_path']}. Skipping download.")
     else:
-        print(f"DEBUG: Model already exists at {variant['model_path']}. Skipping download.")
+        print("INFO: Using HuggingFace Hub repo. Will let transformers download weights automatically.")
     
     trainer_config = init_trainer_config(variant)
     trainer = Trainer(**trainer_config)
@@ -242,7 +251,11 @@ def experiment(variant):
         print("INFO: MPS accelerator detected. Explicitly casting the entire model to float32.")
         model = model.float()
 
-    image_preprocess = model.model.image_processor
+    # Kosmos의 경우 processor 사용, 다른 모델은 image_processor 사용
+    if variant["model"] == "kosmos" and hasattr(model.model, "processor"):
+        image_preprocess = model.model.processor
+    else:
+        image_preprocess = model.model.image_processor
 
     _kwargs = {
         "model": model,

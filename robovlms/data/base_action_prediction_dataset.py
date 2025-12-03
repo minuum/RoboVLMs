@@ -485,8 +485,14 @@ class ActionPredictionPaddedCollator:
         #     action_chunk = torch.stack(action_chunk)
         #     action_chunk_mask = torch.stack(action_chunk_mask)
         # import pdb; pdb.set_trace()
-        action_chunk = torch.stack(action_chunk)
-        action_chunk_mask = torch.stack(action_chunk_mask)
+        action_chunk = (
+            torch.stack(action_chunk) if action_chunk[0] is not None else None
+        )
+        action_chunk_mask = (
+            torch.stack(action_chunk_mask)
+            if action_chunk_mask[0] is not None
+            else None
+        )
 
         output = {
             "rgb": image_tensors,

@@ -1,0 +1,277 @@
+{
+  "experiment_name": "k_project_automotive_vla",
+  "description": "K-프로젝트 로봇카 네비게이션을 위한 Event-Triggered VLA 시스템",
+  "version": "2.0",
+  "date": "2025-07-25",
+  
+  "robovlm_name": "RoboPaliGemma",
+  
+  "model_config": {
+    "vlm": {
+      "type": "PaliGemmaForConditionalGeneration",
+      "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+      "name": "paligemma",
+      "torch_dtype": "bfloat16",
+      "device_map": "auto",
+      "low_cpu_mem_usage": true,
+      "cache_dir": ".vlms"
+    },
+    "processor": {
+      "type": "PaliGemmaProcessor",
+      "pretrained_model_name_or_path": "google/paligemma-3b-mix-224",
+      "cache_dir": ".vlms"
+    },
+    "use_hand_rgb": false,
+    "use_vision_resampler": false,
+    "use_clip_norm": false,
+    "use_state": false,
+    "freeze_vision_encoder": false,
+    "freeze_text_encoder": false
+  },
+  
+  "train_setup": {
+    "predict_action": true,
+    "predict_forward": false,
+    "predict_caption": false,
+    "reinit": false,
+    "finetune_mode": "full"
+  },
+  
+  "act_head": {
+    "type": "ROS2PolicyHead",
+    "action_mode": "automotive",
+    "action_dim": 4,
+    "action_space": "continuous",
+    "down_sample": "pooling",
+    "latent": 1,
+    "hidden_size": 1024,
+    "dropout": 0.1,
+    "action_bounds": {
+      "linear_x": [-2.0, 2.0],
+      "linear_y": [-1.0, 1.0], 
+      "angular_z": [-3.14, 3.14],
+      "action_type": [0, 3]
+    },
+    "action_descriptions": {
+      "linear_x": "전진/후진 속도 (m/s)",
+      "linear_y": "좌우 이동 속도 (m/s)", 
+      "angular_z": "회전 속도 (rad/s)",
+      "action_type": "액션 타입 (0:이동, 1:회전, 2:정지, 3:특수)"
+    }
+  },
+  
+  "fwd_head": null,
+  
+  "inference_config": {
+    "event_triggered": true,
+    "window_size": 8,
+    "chunk_size": 1,
+    "latency_target_ms": 100,
+    "batch_size": 1,
+    "max_new_tokens": 512,
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "do_sample": false
+  },
+  
+  "training_config": {
+    "window_size": 8,
+    "fwd_pred_next_n": 1,
+    "batch_size": 4,
+    "seq_len": 9,
+    "learning_rate": 1e-5,
+    "weight_decay": 0.01,
+    "warmup_epochs": 2,
+    "max_epochs": 50,
+    "max_steps": -1,
+    "scheduler": "cosine",
+    "min_lr_scale": 0.1,
+    "gradient_clip_val": 1.0,
+    "accumulate_grad_batches": 1
+  },
+  
+  "loss_config": {
+    "cap_loss_ratio": 0.1,
+    "arm_gripper_loss_ratio": 0.0,
+    "action_loss_ratio": 1.0,
+    "fwd_loss_ratio": 0.0,
+    "kl_div_ratio": 0.0,
+    "clip_norm_ratio": 0.0,
+    "vl_cotrain_ratio": 0.0
+  },
+  
+  "dataset": {
+    "data_dir": "data/k_project/automotive/train",
+    "data_name_list": ["carla_automotive", "real_navigation", "calvin_converted"],
+    "task_name": "k_project_automotive_navigation",
+    "batch_size": 4,
+    "seq_len": 9,
+    "window_size": 8,
+    "chunk_size": 1,
+    "image_size": 224,
+    "data_type": "ros2_calvin",
+    "conversion_mode": "automotive",
+    "normalize_actions": true,
+    "action_dim": 4,
+    "save_format": "npz",
+    "augmentation": {
+      "random_crop": false,
+      "random_flip": false,
+      "color_jitter": 0.1,
+      "gaussian_noise": 0.01
+    }
+  },
+  
+  "val_dataset": {
+    "data_dir": "data/k_project/automotive/val",
+    "data_name_list": ["carla_val", "vehicle_command_val", "sequential_task_val"],
+    "task_name": "k_project_automotive_val",
+    "batch_size": 2,
+    "seq_len": 9,
+    "window_size": 8,
+    "chunk_size": 1,
+    "image_size": 224,
+    "data_type": "ros2_action",
+    "normalize_actions": true,
+    "action_dim": 4
+  },
+  
+  "evaluation_config": {
+    "eval_type": "calvin_sequential",
+    "num_sequences": 5,
+    "max_steps_per_task": 100,
+    "success_threshold": 0.8,
+    "task_definitions": [
+      {
+        "id": 1,
+        "description": "앞으로 2미터 이동해",
+        "success_condition": "distance_moved >= 1.8",
+        "timeout_sec": 30
+      },
+      {
+        "id": 2, 
+        "description": "오른쪽으로 90도 회전해",
+        "success_condition": "abs(rotation_delta - 1.57) < 0.2",
+        "timeout_sec": 20
+      },
+      {
+        "id": 3,
+        "description": "빨간 원뿔을 찾아가",
+        "success_condition": "distance_to_red_cone < 0.5",
+        "timeout_sec": 60
+      },
+      {
+        "id": 4,
+        "description": "장애물을 피해서 벽까지 가",
+        "success_condition": "reached_wall and no_collision",
+        "timeout_sec": 90
+      },
+      {
+        "id": 5,
+        "description": "출발점으로 돌아와", 
+        "success_condition": "distance_to_start < 0.3",
+        "timeout_sec": 60
+      }
+    ],
+    "metrics": [
+      "success_rate_1_task",
+      "success_rate_2_task", 
+      "success_rate_3_task",
+      "success_rate_4_task",
+      "success_rate_5_task",
+      "average_length",
+      "inference_latency_ms",
+      "safety_compliance_rate"
+    ]
+  },
+  
+  "ros2_config": {
+    "domain_id": 42,
+    "qos_profile": "sensor_data",
+    "topics": {
+      "camera_input": "/camera/image_raw",
+      "text_command": "/vla_text_command",
+      "action_output": "/cmd_vel",
+      "system_status": "/vla_system_status",
+      "latency_monitor": "/vla_latency",
+      "safety_monitor": "/vla_safety"
+    },
+    "services": {
+      "emergency_stop": "/emergency_stop",
+      "system_reset": "/vla_system_reset"
+    },
+    "action_servers": {
+      "navigate_to_goal": "/navigate_to_goal"
+    }
+  },
+  
+  "safety_config": {
+    "enable_safety_monitor": true,
+    "max_linear_velocity": 2.0,
+    "max_angular_velocity": 3.14,
+    "emergency_brake_distance": 0.5,
+    "collision_avoidance": true,
+    "safety_sensors": ["lidar", "camera", "ultrasonic"],
+    "failsafe_actions": {
+      "sensor_failure": "emergency_stop",
+      "communication_timeout": "gradual_stop",
+      "high_latency": "reduce_speed"
+    }
+  },
+  
+  "jetson_optimization": {
+    "enable": true,
+    "target_device": "jetson_orin_nx_16gb",
+    "memory_optimization": {
+      "use_gradient_checkpointing": true,
+      "offload_to_cpu": false,
+      "mixed_precision": "bfloat16",
+      "max_memory_mb": 14000
+    },
+    "compute_optimization": {
+      "use_tensorrt": false,
+      "use_torch_compile": true,
+      "enable_flash_attention": false
+    },
+    "power_management": {
+      "max_power_watts": 25,
+      "thermal_throttling": true,
+      "performance_mode": "balanced"
+    }
+  },
+  
+  "logging_config": {
+    "log_level": "INFO",
+    "log_dir": "logs/k_project_automotive",
+    "enable_wandb": false,
+    "enable_tensorboard": true,
+    "save_model_checkpoints": true,
+    "checkpoint_interval": 1000,
+    "log_every_n_steps": 10,
+    "save_predictions": true,
+    "save_attention_maps": false
+  },
+  
+  "experiment": {
+    "name": "k_project_automotive_event_triggered",
+    "version": "v2.0", 
+    "description": "RoboVLMs Calvin 방식을 로봇카 네비게이션에 적용한 Event-Triggered VLA 시스템. 96% 반응속도 개선, 4D 액션 공간, Jetson 최적화, Sequential Task 평가",
+    "tags": [
+      "k-project",
+      "automotive", 
+      "event-triggered",
+      "paligemma-3b",
+      "ros2",
+      "vla",
+      "navigation",
+      "jetson",
+      "real-time"
+    ],
+    "paper_contributions": [
+      "Event-Triggered VLA 패러다임 제안",
+      "조작→네비게이션 도메인 적응",
+      "엣지 환경 실시간 VLA 구현",
+      "Calvin Sequential Task 네비게이션 확장"
+    ]
+  }
+}

@@ -1,0 +1,178 @@
+version: '3.8'
+
+services:
+  # K-프로젝트 Event-Triggered VLA 메인 서비스
+  k_project_event_vla:
+    image: nvcr.io/nvidia/pytorch:23.10-py3
+    container_name: k_project_event_vla
+    restart: unless-stopped
+    
+    # GPU 및 특권 설정
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    privileged: true
+    
+    # 네트워크 설정 (ROS2 통신을 위해 host 네트워크 사용)
+    network_mode: host
+    
+    # 환경 변수
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - ROS_DOMAIN_ID=42
+      - CUDA_VISIBLE_DEVICES=0
+      - TORCH_DTYPE=bfloat16
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - TRANSFORMERS_CACHE=/workspace/.vlms
+      - HF_HOME=/workspace/.vlms
+      - PYTHONPATH=/workspace:/workspace/robovlms
+      - VLA_MODEL=paligemma-3b-mix-224
+      - ACTION_MODE=automotive
+      - ACTION_DIM=4
+      - WINDOW_SIZE=8
+      - INFERENCE_LATENCY_TARGET=100
+      - PROJECT_NAME=k_project_event_vla
+    
+    # 볼륨 마운트
+    volumes:
+      # 작업 디렉토리
+      - .:/workspace
+      - ../Model_ws:/model_ws
+      - ../ROS_action:/ros_action
+      
+      # 시스템 접근 (센서, GPU 등)
+      - /dev:/dev
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      
+      # 모델 캐시 (호스트에 저장)
+      - ./models_cache:/workspace/.vlms
+      
+      # ROS2 DDS 설정
+      - /etc/localtime:/etc/localtime:ro
+    
+    # 작업 디렉토리
+    working_dir: /workspace
+    
+    # 컨테이너 시작 명령어
+    command: >
+      bash -c "
+        echo '🚀 K-프로젝트 Event-Triggered VLA 컨테이너 시작' &&
+        
+        # ROS2 환경 설정
+        source /opt/ros/humble/setup.bash &&
+        export ROS_DOMAIN_ID=42 &&
+        
+        # Python 의존성 설치 (캐시된 경우 빠름)
+        pip install --no-cache-dir transformers torch torchvision accelerate &&
+        pip install --no-cache-dir datasets pillow numpy opencv-python &&
+        
+        # VLA 시스템 대기 모드로 시작
+        echo '✅ VLA 시스템 준비 완료. 명령 대기 중...' &&
+        
+        # 무한 대기 (다른 스크립트에서 컨테이너 내부 실행)
+        tail -f /dev/null
+      "
+    
+    # 헬스체크
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import torch; print('GPU:', torch.cuda.is_available())"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ROS2 브릿지 서비스 (선택적)
+  ros2_bridge:
+    image: ros:humble
+    container_name: k_project_ros2_bridge
+    restart: unless-stopped
+    
+    network_mode: host
+    
+    environment:
+      - ROS_DOMAIN_ID=42
+      - ROS_LOCALHOST_ONLY=0
+    
+    volumes:
+      - ../Model_ws:/model_ws
+      - ../ROS_action:/ros_action
+      - /dev:/dev
+    
+    working_dir: /model_ws
+    
+    command: >
+      bash -c "
+        source /opt/ros/humble/setup.bash &&
+        export ROS_DOMAIN_ID=42 &&
+        
+        # 워크스페이스 빌드
+        if [ -d 'src' ]; then
+          colcon build --packages-select vla_node &&
+          source install/setup.bash &&
+          echo '✅ ROS2 브릿지 준비 완료'
+        fi &&
+        
+        # ROS2 노드 실행 대기
+        sleep infinity
+      "
+    
+    depends_on:
+      - k_project_event_vla
+    
+    profiles:
+      - ros2  # 선택적 실행: docker-compose --profile ros2 up
+
+  # 모니터링 서비스 (선택적)
+  monitoring:
+    image: nvcr.io/nvidia/pytorch:23.10-py3
+    container_name: k_project_monitoring
+    restart: unless-stopped
+    
+    network_mode: host
+    
+    environment:
+      - ROS_DOMAIN_ID=42
+    
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    
+    working_dir: /workspace
+    
+    command: >
+      bash -c "
+        echo '📊 K-프로젝트 모니터링 서비스 시작' &&
+        
+        # 모니터링 스크립트 실행
+        while true; do
+          echo '=== System Status ===' &&
+          date &&
+          nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader &&
+          docker stats --no-stream k_project_event_vla | tail -1 &&
+          echo '' &&
+          sleep 30
+        done
+      "
+    
+    profiles:
+      - monitoring  # 선택적 실행: docker-compose --profile monitoring up
+
+# 네트워크 설정 (host 네트워크 사용으로 불필요하지만 명시)
+networks:
+  default:
+    external: true
+    name: host
+
+# 볼륨 설정
+volumes:
+  models_cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/models_cache

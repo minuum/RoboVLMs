@@ -438,10 +438,10 @@ def preprocess_image(sample, image_processor, model_type):
     #     image = [image_processor(s).unsqueeze(0) for s in sample]
     #     image = torch.cat(image, dim=0)
 
-    # elif model_type == 'kosmos':
-    #     image = [image_processor(s, return_tensors="pt")['pixel_values'] for s in sample]
-    #     image = torch.cat(image, dim=0)
-    if model_type.lower() in ["paligemma"]:
+    if model_type == 'kosmos':
+        image = [image_processor(s, return_tensors="pt")['pixel_values'] for s in sample]
+        image = torch.cat(image, dim=0)
+    elif model_type.lower() in ["paligemma"]:
         image = [
             image_processor(images=s, return_tensors="pt")["pixel_values"]
             for s in sample
@@ -604,19 +604,19 @@ def get_prompt_builder(model_name, eos=None, bos=None):
     import robovlms.data.prompting
 
     if "vicuna" in model_name.lower():
-        return data.prompting.VicunaV15ChatPromptBuilder(model_family, eos=eos, bos=bos)
+        return robovlms.data.prompting.VicunaV15ChatPromptBuilder(model_family, eos=eos, bos=bos)
     elif "mistral" in model_name.lower():
-        return data.prompting.MistralInstructPromptBuilder(
+        return robovlms.data.prompting.MistralInstructPromptBuilder(
             model_family, eos=eos, bos=bos
         )
     elif "llama" in model_name.lower():
-        return data.prompting.LLaMa2ChatPromptBuilder(model_family, eos=eos, bos=bos)
+        return robovlms.data.prompting.LLaMa2ChatPromptBuilder(model_family, eos=eos, bos=bos)
     elif "mpt" in model_name.lower():
-        return data.prompting.PhiPromptBuilder(model_family, eos=eos, bos=bos)
+        return robovlms.data.prompting.PhiPromptBuilder(model_family, eos=eos, bos=bos)
     elif "qwen" in model_name.lower():
-        return data.prompting.QwenPromptBuilder(model_family, eos=eos, bos=bos)
+        return robovlms.data.prompting.QwenPromptBuilder(model_family, eos=eos, bos=bos)
     else:
-        return data.prompting.PhiPromptBuilder(model_family, eos=eos, bos=bos)
+        return robovlms.data.prompting.PhiPromptBuilder(model_family, eos=eos, bos=bos)
 
 
 def mu_law_companding(x, mu=255, maintain_last=True):
