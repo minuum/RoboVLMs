@@ -166,6 +166,14 @@ class BaseRoboVLM(nn.Module):
         return state_embeddings
 
     def model_encode_images(self, images):
+        if hasattr(self.model, "vision_model"):
+             vision_outputs = self.model.vision_model(pixel_values=images)
+             image_embeds = self.model.image_to_text_projection(vision_outputs.last_hidden_state)
+             # Debug print and fix
+             if isinstance(image_embeds, tuple):
+                 print(f"DEBUG: model_encode_images returning Tuple! len={len(image_embeds)}")
+                 image_embeds = image_embeds[0]
+             return image_embeds
         raise NotImplementedError
 
     def encode_images(self, images, image_sizes=None):
@@ -255,23 +263,35 @@ class BaseRoboVLM(nn.Module):
 
     @property
     def hidden_size(self):
-        raise NotImplementedError
+        if hasattr(self.model.config, "hidden_size"):
+            return self.model.config.hidden_size
+        elif hasattr(self.model.config, "embed_dim"):
+            return self.model.config.embed_dim
+        return 2048
 
     @property
     def word_embedding(self):
+        if hasattr(self.model, "text_model"):
+            return self.model.text_model.model.embed_tokens
+        if hasattr(self.model, "get_input_embeddings"):
+            return self.model.get_input_embeddings()
         raise NotImplementedError
 
     @property
     def vision_tower(self):
-        raise NotImplementedError
+        if hasattr(self.model, "vision_model"):
+            return self.model.vision_model
+        return None
 
     @property
     def text_tower(self):
-        raise NotImplementedError
+        if hasattr(self.model, "text_model"):
+            return self.model.text_model
+        return None
 
     @property
     def model(self):
-        raise NotImplementedError
+        return self.backbone
 
     @property
     def start_image_token_id(self):
@@ -1135,6 +1155,9 @@ class BaseRoboVLM(nn.Module):
             # Some backbones (e.g., Kosmos-2) require pixel_values or image_embeds.
             # Fall back to passing pixel_values directly for Kosmos
             if "pixel_values" in str(e) or "image_embeds" in str(e):
+                # Ensure batch_size is defined (it corresponds to the flattened batch*seq_len dimension)
+                batch_size = lang_x.shape[0]
+                
                 # vision_x is shaped as (bs*seq, 1, C, H, W) for history_type in [pre, post]
                 # Use pixel_values pathway for Kosmos
                 if vision_x.ndim == 5 and vision_x.shape[1] == 1:
@@ -1189,10 +1212,10 @@ class BaseRoboVLM(nn.Module):
                     dummy_input_ids = lang_x
                     simple_attention_mask = attention_mask
                     # Pad if needed to accommodate image tokens
-                    batch_size, seq_len = dummy_input_ids.shape
-                    padded_length = seq_len
-                    if seq_len < num_image_tokens:
-                        pad_length = num_image_tokens - seq_len
+                    batch_size, token_seq_len = dummy_input_ids.shape
+                    padded_length = token_seq_len
+                    if token_seq_len < num_image_tokens:
+                        pad_length = num_image_tokens - token_seq_len
                         dummy_input_ids = torch.cat([
                             dummy_input_ids,
                             torch.zeros((batch_size, pad_length), dtype=torch.long, device=dummy_input_ids.device)
@@ -1204,8 +1227,8 @@ class BaseRoboVLM(nn.Module):
                         padded_length = dummy_input_ids.shape[1]
                 
                 # Create image_embeds_position_mask: first num_image_tokens positions should be True
-                batch_size, seq_len = dummy_input_ids.shape
-                image_embeds_position_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=pixel_values.device)
+                batch_size, token_seq_len = dummy_input_ids.shape
+                image_embeds_position_mask = torch.zeros((batch_size, token_seq_len), dtype=torch.bool, device=pixel_values.device)
                 image_embeds_position_mask[:, :num_image_tokens] = True  # First num_image_tokens positions for image embeddings
                 
                 # Always use pixel_values to avoid in-place operation errors
@@ -1226,14 +1249,14 @@ class BaseRoboVLM(nn.Module):
                 inputs_embeds = inputs_embeds.clone()
                 
                 # Initialize action_token_mask for Kosmos
-                batch_size, seq_len = inputs_embeds.shape[:2]
-                action_token_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=inputs_embeds.device)
+                batch_size, token_seq_len = inputs_embeds.shape[:2]
+                action_token_mask = torch.zeros((batch_size, token_seq_len), dtype=torch.bool, device=inputs_embeds.device)
 
                 # Add Action Token if needed
                 if self.use_act_queries:
                     # Action query token 추가
                     # (bs, 1, hidden_size)
-                    action_query = self.action_token.expand(batch_size, -1, -1)
+                    action_query = self.action_token.view(1, 1, -1).expand(batch_size, 1, -1)
                     
                     # Ensure dtype matches
                     if action_query.dtype != inputs_embeds.dtype:
@@ -1391,9 +1414,16 @@ class BaseRoboVLM(nn.Module):
                         bs, seq_len, self.latent_num, hidden_size
                     )
             else:
-                action_hs = output_hs[action_token_mask].reshape(
+                # Debug
+                masked_hs = output_hs[action_token_mask]
+                print(f"DEBUG: output_hs shape: {output_hs.shape}")
+                print(f"DEBUG: action_token_mask sum: {action_token_mask.sum()}")
+                print(f"DEBUG: masked_hs shape: {masked_hs.shape}")
+                
+                action_hs = masked_hs.reshape(
                     bs, seq_len, self.latent_num, -1
                 )
+                print(f"DEBUG: action_hs final shape: {action_hs.shape}")
 
         elif action_space == "down_sample":
             action_hs = output_hs

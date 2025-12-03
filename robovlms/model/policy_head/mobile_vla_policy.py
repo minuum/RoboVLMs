@@ -81,6 +81,7 @@ class MobileVLALSTMDecoder(BasePolicyHead):
             velocities: (B, seq_len, fwd_pred_next_n, action_dim) - 2D 속도 (linear_x, linear_y)
             None: gripper 없음 (BasePolicyHead.loss 호환성을 위해)
         """
+        print(f"DEBUG: MobileVLALSTMDecoder forward input tok_seq shape: {tok_seq.shape}")
         # Down sample 처리 (LSTMDecoder와 동일)
         # tok_seq shape 확인 및 처리
         if len(tok_seq.shape) == 4:
