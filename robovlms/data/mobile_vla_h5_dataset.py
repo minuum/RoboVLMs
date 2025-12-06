@@ -124,79 +124,91 @@ class MobileVLAH5Dataset(Dataset):
         return len(self.episode_files) - 1, 0
     
     def __getitem__(self, idx):
-        # 에피소드와 프레임 인덱스 찾기
-        # RoboVLMs 구조: window_size + fwd_pred_next_n = 8 + 10 = 18 프레임
+        # Random Temporal Sampling for better diversity
+        # Instead of sequential indexing, randomly select episode and start frame
+        
         total_frames_needed = self.window_size + self.fwd_pred_next_n
-        ep_idx = 0
-        frame_idx = idx
-        for i, length in enumerate(self.episode_lengths):
-            if length >= total_frames_needed:
-                valid_frames = length - total_frames_needed + 1
-                if frame_idx < valid_frames:
-                    ep_idx = i
-                    break
-                frame_idx -= valid_frames
+        
+        # Random episode selection (with reproducibility for validation)
+        if self.is_validation:
+            # Validation: deterministic sampling for reproducibility
+            ep_idx = idx % len(self.episode_files)
+            np.random.seed(idx)  # Deterministic random for this sample
+        else:
+            # Training: truly random episode selection
+            ep_idx = np.random.randint(0, len(self.episode_files))
         
         # HDF5 파일 로드
         with h5py.File(self.episode_files[ep_idx], 'r') as f:
-            # 이미지 로드 (window_size + fwd_pred_next_n 프레임)
-            # DiskCalvinDataset과 동일한 구조: 전체 시퀀스 로드
+            total_len = len(f['images'])
+            
+            # Random start frame within valid range
+            max_start = max(0, total_len - total_frames_needed)
+            if self.is_validation:
+                # Validation: deterministic start
+                start_frame = (idx // len(self.episode_files)) % (max_start + 1) if max_start > 0 else 0
+            else:
+                # Training: random start
+                start_frame = np.random.randint(0, max_start + 1) if max_start > 0 else 0
+            
+            # 이미지 로드 (random start부터 total_frames_needed 프레임)
             images = []
-            for t in range(frame_idx, frame_idx + total_frames_needed):
-                img_array = f['images'][t]  # 'observations/images' -> 'images'
-                # (H, W, C) -> PIL Image
+            for t in range(start_frame, min(start_frame + total_frames_needed, total_len)):
+                img_array = f['images'][t]
                 img = Image.fromarray(img_array.astype(np.uint8))
-                # Resize to image_size
                 img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
-                # PIL -> numpy -> tensor
                 img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
-                # (C, H, W)
                 img_tensor = img_tensor.permute(2, 0, 1)
                 images.append(img_tensor)
             
-            # 액션 로드 (window_size + fwd_pred_next_n 프레임)
-            # DiskCalvinDataset과 동일: 시퀀스 형태로 반환
-            # Shape: (window_size + fwd_pred_next_n, 2)
+            # Padding if needed (edge case)
+            while len(images) < total_frames_needed:
+                images.append(torch.zeros_like(images[-1]) if images else torch.zeros(3, self.image_size, self.image_size))
+            
+            # 액션 로드
             actions = []
-            for t in range(frame_idx, frame_idx + total_frames_needed):
+            for t in range(start_frame, min(start_frame + total_frames_needed, total_len)):
                 if t < len(f['actions']):
                     action_2d = f['actions'][t][:2]  # linear_x, linear_y만 사용
-                    # 2D 액션 그대로 사용 (패딩 없음)
                     action = action_2d.copy()
                 else:
-                    action = np.zeros(2)  # 패딩 (2D)
+                    action = np.zeros(2)
                 actions.append(action)
             
-            # 언어 명령 로드 (기본 명령 사용)
-            language = "Navigate to the target location"  # 기본 명령
+            # Padding for actions
+            while len(actions) < total_frames_needed:
+                actions.append(np.zeros(2))
+            
+            # 언어 명령 로드 (H5 파일에서 실제 읽기)
+            if 'language_instruction' in f:
+                language_bytes = f['language_instruction'][0]
+                language = language_bytes.decode('utf-8') if isinstance(language_bytes, bytes) else str(language_bytes)
+            else:
+                language = "Navigate to the target location"  # fallback for old datasets
         
         # 텐서 변환
-        images_tensor = torch.stack(images)  # (window_size + fwd_pred_next_n, C, H, W)
-        actions_tensor = torch.from_numpy(np.array(actions)).float()  # (window_size + fwd_pred_next_n, 2)
+        images_tensor = torch.stack(images)  # (total_frames_needed, C, H, W)
+        actions_tensor = torch.from_numpy(np.array(actions)).float()  # (total_frames_needed, 2)
         
-        # 액션 정규화 [-1, 1] (2D 액션 기준)
+        # 액션 정규화 [-1, 1]
         actions_tensor = torch.clamp(actions_tensor, -1.0, 1.0)
         
-        # 언어 토크나이징 (간단한 더미 토큰 사용)
-        # 실제 토크나이징은 collate_fn에서 처리됨
-        input_ids = torch.zeros(256, dtype=torch.long)  # 더미
-        attention_mask = torch.ones(256, dtype=torch.long)  # 더미
+        # 언어 토크나이징 (더미 - collate_fn에서 실제 처리)
+        input_ids = torch.zeros(256, dtype=torch.long)
+        attention_mask = torch.ones(256, dtype=torch.long)
         
-        # RoboVLMs 형식에 맞춰 반환 (배치 전 개별 샘플)
-        # DiskCalvinDataset과 동일한 구조: 시퀀스 형태로 반환
-        # CRITICAL: data_source must contain 'action' for forward_action to be called!
         return {
-            'rgb': images_tensor,  # (window_size + fwd_pred_next_n, C, H, W)
-            'hand_rgb': torch.zeros_like(images_tensor),  # 더미 gripper 이미지
-            'actions': actions_tensor,  # (window_size + fwd_pred_next_n, 2) - DiskCalvinDataset과 동일
-            'action_mask': torch.ones(total_frames_needed),  # (window_size + fwd_pred_next_n,)
-            'image_mask': torch.ones(total_frames_needed),  # (window_size + fwd_pred_next_n,)
-            'text': input_ids,  # (seq_len,)
-            'text_mask': attention_mask,  # (seq_len,)
-            'lang': language,  # DiskCalvinDataset과 동일한 키 이름
+            'rgb': images_tensor,
+            'hand_rgb': torch.zeros_like(images_tensor),
+            'actions': actions_tensor,
+            'action_mask': torch.ones(total_frames_needed),
+            'image_mask': torch.ones(total_frames_needed),
+            'text': input_ids,
+            'text_mask': attention_mask,
+            'lang': language,
             'raw_text': language,
-            'data_source': 'mobile_vla_action',  # Must contain 'action'!
-            'attention_mask': torch.ones(total_frames_needed),  # 이미지 마스크 (모두 유효)
+            'data_source': 'mobile_vla_action',
+            'attention_mask': torch.ones(total_frames_needed),
         }
     
     def collater(self, data):
