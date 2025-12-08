@@ -105,7 +105,10 @@ class BaseRoboVLM(nn.Module):
                 )
 
             if self.action_space == "continuous":
-                self.action_token = nn.Parameter(torch.zeros(self.hidden_size))
+                # [FIX] action_token을 정규분포로 초기화 (Xavier scale)
+                # 기존 zeros 초기화는 VLM self-attention에서 정보 전달이 안 됨
+                std = (2.0 / (self.hidden_size + self.hidden_size)) ** 0.5  # Xavier scale
+                self.action_token = nn.Parameter(torch.randn(self.hidden_size) * std)
                 self.action_token.requires_grad_(True)
 
         if self.fwd_head_configs is not None:

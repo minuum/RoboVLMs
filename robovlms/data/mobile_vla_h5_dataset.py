@@ -38,6 +38,7 @@ class MobileVLAH5Dataset(Dataset):
         train_split=0.8,
         is_validation=False,
         shift_first=False,
+        abs_action=False,  # 액션 절대값 사용 (방향 제거)
         **kwargs
     ):
         self.data_dir = data_dir
@@ -50,6 +51,7 @@ class MobileVLAH5Dataset(Dataset):
         self.train_split = train_split
         self.is_validation = is_validation
         self.shift_first = shift_first
+        self.abs_action = abs_action  # 방향 제거 옵션
         
         # 에피소드 파일 로드
         episode_files = sorted(glob.glob(f"{data_dir}/{episode_pattern}"))
@@ -190,7 +192,11 @@ class MobileVLAH5Dataset(Dataset):
         images_tensor = torch.stack(images)  # (total_frames_needed, C, H, W)
         actions_tensor = torch.from_numpy(np.array(actions)).float()  # (total_frames_needed, 2)
         
-        # 액션 정규화 [-1, 1]
+        # 방향 제거 옵션: linear_y의 절대값 사용
+        if self.abs_action:
+            actions_tensor[:, 1] = torch.abs(actions_tensor[:, 1])  # linear_y만 절대값
+        
+        # 액션 정규화 [-1, 1] (abs_action일 때는 [0, 1]이 됨)
         actions_tensor = torch.clamp(actions_tensor, -1.0, 1.0)
         
         # 언어 토크나이징 (더미 - collate_fn에서 실제 처리)
