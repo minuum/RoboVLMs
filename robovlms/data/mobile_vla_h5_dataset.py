@@ -39,6 +39,7 @@ class MobileVLAH5Dataset(Dataset):
         is_validation=False,
         shift_first=False,
         abs_action=False,  # 액션 절대값 사용 (방향 제거)
+        augment=False,     # 데이터 증강 (Mirroring 등)
         **kwargs
     ):
         self.data_dir = data_dir
@@ -52,6 +53,7 @@ class MobileVLAH5Dataset(Dataset):
         self.is_validation = is_validation
         self.shift_first = shift_first
         self.abs_action = abs_action  # 방향 제거 옵션
+        self.augment = augment and (not is_validation)  # 검증셋에는 증강 미적용
         
         # 에피소드 파일 로드
         episode_files = sorted(glob.glob(f"{data_dir}/{episode_pattern}"))
@@ -188,6 +190,27 @@ class MobileVLAH5Dataset(Dataset):
             else:
                 language = "Navigate to the target location"  # fallback for old datasets
         
+        # -------------------------------------------------------------------------
+        # Data Augmentation: Mirroring (Left <-> Right)
+        # -------------------------------------------------------------------------
+        if self.augment and np.random.rand() < 0.5:
+            # 1. Flip Images
+            # images[i] shape: (C, H, W)
+            images = [torch.flip(img, [2]) for img in images]  # Flip width dim
+            
+            # 2. Invert linear_y Action (Left <-> Right)
+            # actions[i] shape: (2,) -> [linear_x, linear_y]
+            # linear_x(전진)는 그대로, linear_y(회전)는 부호 반전
+            actions = [np.array([a[0], -a[1]]) for a in actions]
+            
+            # 3. Swap Language 'left' <-> 'right'
+            lower_lang = language.lower()
+            if 'left' in lower_lang:
+                language = lower_lang.replace('left', 'right')
+            elif 'right' in lower_lang:
+                language = lower_lang.replace('right', 'left')
+        # -------------------------------------------------------------------------
+
         # 텐서 변환
         images_tensor = torch.stack(images)  # (total_frames_needed, C, H, W)
         actions_tensor = torch.from_numpy(np.array(actions)).float()  # (total_frames_needed, 2)
