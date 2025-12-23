@@ -53,6 +53,7 @@ class BaseRoboVLM(nn.Module):
         vision_resampler_configs=None,
         use_clip_norm=False,
         use_state=False,
+        quantization_config=None,  # BitsAndBytes quantization
         **kwargs,
     ):
         super().__init__()
@@ -68,6 +69,7 @@ class BaseRoboVLM(nn.Module):
         self.use_tube_mask = use_tube_mask
         self.use_state = use_state
         self.fwd_pred_next_n = fwd_pred_next_n
+        self.quantization_config = quantization_config  # Store for later use
 
         self.kwargs = kwargs
         self.configs = configs
@@ -215,7 +217,11 @@ class BaseRoboVLM(nn.Module):
         return image_features
 
     def _init_backbone(self):
-        tokenizer, model = build_vlm(self.configs["vlm"], self.configs["tokenizer"])
+        tokenizer, model = build_vlm(
+            self.configs["vlm"], 
+            self.configs["tokenizer"],
+            quantization_config=self.quantization_config  # Pass BitsAndBytes config
+        )
         if "Processor" in self.configs["tokenizer"]["type"]:
             self.processor = tokenizer
             self.tokenizer = self.processor.tokenizer

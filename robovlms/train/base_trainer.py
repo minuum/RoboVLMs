@@ -17,11 +17,12 @@ import robovlms.model.backbone as RoboVLM_Backbone
 
 
 class BaseTrainer(pl.LightningModule):
-    def __init__(self, configs):
+    def __init__(self, configs, quantization_config=None):
         super().__init__()
         self._main_rank_print("--------------- model configs ---------------")
         self._main_rank_print(configs)
         self.configs = configs
+        self.quantization_config = quantization_config  # BitsAndBytes quantization
         self.model_fn = getattr(RoboVLM_Backbone, configs["robovlm_name"])
         self._initialize()
         self.save_hyperparameters()
@@ -50,6 +51,7 @@ class BaseTrainer(pl.LightningModule):
             vision_resampler_configs=self.configs.get("vision_resampler", None),
             use_clip_norm=self.configs.get("use_clip_norm", False),
             use_state=self.configs.get("use_state, False", False),
+            quantization_config=self.quantization_config,  # BitsAndBytes INT8/INT4
         )
         model = model.train()
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -5,11 +5,21 @@ import torch
 from robovlms.utils.model_utils import build_tokenizer
 
 
-def build_vlm(vlm_config, tokenizer_config, precision="bf16"):
+def build_vlm(vlm_config, tokenizer_config, precision="bf16", quantization_config=None):
+    """
+    Build Vision-Language Model with optional BitsAndBytes quantization
+    
+    Args:
+        vlm_config: VLM configuration dict
+        tokenizer_config: Tokenizer configuration dict
+        precision: Model precision (bf16, fp16, fp32)
+        quantization_config: Optional BitsAndBytesConfig for INT8/INT4 quantization
+    """
     vlm_config = copy.deepcopy(vlm_config)
     model_path = vlm_config.get("pretrained_model_name_or_path")
     model_name = vlm_config.get("name")
     model_type = vlm_config.get("type", "AutoModel")
+    
     if model_name == "paligemma":
         from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 
@@ -19,6 +29,7 @@ def build_vlm(vlm_config, tokenizer_config, precision="bf16"):
             device_map="cpu",
         )
         tokenizer = AutoProcessor.from_pretrained(model_path)
+        
     elif model_name == "llava":
         from llava.model.builder import load_pretrained_model
         from llava.mm_utils import get_model_name_from_path
@@ -33,13 +44,29 @@ def build_vlm(vlm_config, tokenizer_config, precision="bf16"):
             use_flash_attn=False,
             device_map="cpu",
         )
+        
     elif model_name == "kosmos":
         # Kosmos-2: load from transformers.models.kosmos2.modeling_kosmos2 directly
         from transformers.models.kosmos2.modeling_kosmos2 import Kosmos2ForConditionalGeneration
-        model = Kosmos2ForConditionalGeneration.from_pretrained(
-            model_path, trust_remote_code=True
-        )
+        
+        # BitsAndBytes INT8/INT4 quantization (VLA standard)
+        load_kwargs = {
+            "pretrained_model_name_or_path": model_path,
+            "trust_remote_code": True
+        }
+        
+        if quantization_config is not None:
+            # OpenVLA/BitVLA style quantization
+            load_kwargs.update({
+                "quantization_config": quantization_config,
+                "device_map": "auto",  # Auto GPU allocation
+                "torch_dtype": torch.float16  # BitsAndBytes requires FP16
+            })
+            print(f"🔧 Loading Kosmos-2 with BitsAndBytes INT8/INT4")
+        
+        model = Kosmos2ForConditionalGeneration.from_pretrained(**load_kwargs)
         tokenizer = build_tokenizer(tokenizer_config)
+        
     else:
         # Handle deprecated AutoModelForVision2Seq -> AutoModelForImageTextToText
         if model_type == "AutoModelForVision2Seq":

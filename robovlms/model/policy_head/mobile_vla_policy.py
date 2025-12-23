@@ -126,6 +126,9 @@ class MobileVLALSTMDecoder(BasePolicyHead):
                 x = x[:, -1].unsqueeze(1)
         else:
             self.hidden_state = h_0
+            # BitsAndBytes INT8: tok_seq가 FP16일 수 있으므로 LSTM dtype과 맞춤
+            if tok_seq.dtype != next(self.rnn.parameters()).dtype:
+                tok_seq = tok_seq.to(next(self.rnn.parameters()).dtype)
             x, h_n = self.rnn(tok_seq, self.hidden_state)
             self.hidden_state = h_n
 

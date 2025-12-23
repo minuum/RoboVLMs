@@ -32,6 +32,7 @@ import torch.distributed as dist
 
 from robovlms.train.base_trainer import BaseTrainer
 from robovlms.train.mobile_vla_trainer import MobileVLATrainer
+from robovlms.train.mobile_vla_qat_trainer import MobileVLAQATTrainer
 from robovlms.data.datamodule.gr_datamodule import GRDataModule
 from robovlms.data.data_utils import preprocess_image
 from robovlms.utils.setup_callback import SetupCallback
@@ -235,9 +236,11 @@ def experiment(variant):
             "pred_hand_image", False
         )
     
-    # Trainer 타입 선택 (Mobile VLA 또는 Base)
+    # Trainer 타입 선택 (Mobile VLA QAT, Mobile VLA, Base)
     trainer_type = variant.get("trainer_type", "BaseTrainer")
-    if trainer_type == "MobileVLATrainer":
+    if trainer_type == "MobileVLAQATTrainer":
+        TrainerClass = MobileVLAQATTrainer
+    elif trainer_type == "MobileVLATrainer":
         TrainerClass = MobileVLATrainer
     else:
         TrainerClass = BaseTrainer
