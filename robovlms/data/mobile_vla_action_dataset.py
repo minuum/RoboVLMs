@@ -44,18 +44,8 @@ class MobileVLAActionDataset(ActionPredictionDataset):
         gripper_pad: int = -1,
         **kwargs,
     ):
-        # 시나리오 명령어 정의 (super().__init__ 전에 필요)
-        self.scenario_instructions = {
-            "1box_vert_left": "박스 1개 장애물, 가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_vert_right": "박스 1개 장애물, 가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_hori_left": "박스 1개 장애물, 가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_hori_right": "박스 1개 장애물, 가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_vert_left": "박스 2개 장애물, 가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_vert_right": "박스 2개 장애물, 가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_hori_left": "박스 2개 장애물, 가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_hori_right": "박스 2개 장애물, 가장 오른쪽 외곽으로 돌아 컵까지 가세요"
-        }
-
+        # 시나리오 명령어는 Line 151-160에서 정의됨 (중복 제거)
+        
         # ActionPredictionDataset 초기화 (토크나이저/이미지 전처리/변환기 구성)
         # GRDataModule가 is_training을 kwargs로 전달하므로 이를 반영해 mode 자동 결정
         resolved_mode = "train" if kwargs.get("is_training", mode == "train") else "inference"
@@ -147,16 +137,17 @@ class MobileVLAActionDataset(ActionPredictionDataset):
         self.h5_files = valid_files
         assert len(self.h5_files) > 0, f"No valid .h5 files in {data_dir}"
 
-        # 시나리오 → 한국어 지시문(최좌/최우 외곽 경로 기준)
+        # Scenario → English instruction (VLA standard: OpenVLA, RT-2)
+        # Changed from Korean to English for better Kosmos-2 VLM compatibility
         self.scenario_instructions = {
-            "1box_vert_left": "가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_vert_right": "가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_hori_left": "가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "1box_hori_right": "가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_vert_left": "가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_vert_right": "가장 오른쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_hori_left": "가장 왼쪽 외곽으로 돌아 컵까지 가세요",
-            "2box_hori_right": "가장 오른쪽 외곽으로 돌아 컵까지 가세요",
+            "1box_vert_left": "Navigate around the obstacle on the left side and reach the cup",
+            "1box_vert_right": "Navigate around the obstacle on the right side and reach the cup",
+            "1box_hori_left": "Navigate around the obstacle on the left side and reach the cup",
+            "1box_hori_right": "Navigate around the obstacle on the right side and reach the cup",
+            "2box_vert_left": "Navigate around the obstacle on the left side and reach the cup",
+            "2box_vert_right": "Navigate around the obstacle on the right side and reach the cup",
+            "2box_hori_left": "Navigate around the obstacle on the left side and reach the cup",
+            "2box_hori_right": "Navigate around the obstacle on the right side and reach the cup",
         }
 
     def _extract_scenario_from_filename(self, filename: str) -> str:
