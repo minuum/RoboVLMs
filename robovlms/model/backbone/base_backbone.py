@@ -534,10 +534,14 @@ class BaseRoboVLM(nn.Module):
             from robovlms.utils.lora_utils import find_all_linear_names
             from peft import LoraConfig, get_peft_model
 
+            target_modules = self.train_setup_configs.get("lora_target_modules", None)
+            if target_modules is None:
+                target_modules = find_all_linear_names(model)
+
             lora_config = LoraConfig(
                 r=self.train_setup_configs["lora_r"],
                 lora_alpha=self.train_setup_configs["lora_alpha"],
-                target_modules=find_all_linear_names(model),
+                target_modules=target_modules,
                 lora_dropout=self.train_setup_configs["lora_dropout"],
                 bias=self.train_setup_configs["lora_bias"],
                 task_type="CAUSAL_LM",
