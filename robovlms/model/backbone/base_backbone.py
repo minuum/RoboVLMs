@@ -74,14 +74,23 @@ class BaseRoboVLM(nn.Module):
         self.kwargs = kwargs
         self.configs = configs
         self.model_name = configs["model"]
-        self.model_config = json.load(
-            open(
-                os.path.join(
-                    self.configs["vlm"]["pretrained_model_name_or_path"], "config.json"
-                ),
-                "r",
+        # Load model config - support both local path and HuggingFace Hub
+        try:
+            # Try local path first
+            config_path = os.path.join(
+                self.configs["vlm"]["pretrained_model_name_or_path"], "config.json"
             )
-        )
+            self.model_config = json.load(open(config_path, "r"))
+        except (FileNotFoundError, OSError):
+            # If local path doesn't exist, use AutoConfig for HuggingFace Hub
+            try:
+                from transformers import AutoConfig
+                self.model_config = AutoConfig.from_pretrained(
+                    self.configs["vlm"]["pretrained_model_name_or_path"]
+                ).to_dict()
+            except Exception as e:
+                print(f"Warning: Could not load model config: {e}")
+                self.model_config = {}
 
         self.train_setup_configs = train_setup_configs
         self.act_encoder_configs = act_encoder_configs
