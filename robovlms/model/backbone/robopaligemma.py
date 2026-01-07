@@ -13,11 +13,11 @@ class RoboPaligemma(BaseRoboVLM):
 
     @property
     def word_embedding(self):
-        return self.model.language_model.model.embed_tokens
+        return self.model.language_model.embed_tokens
 
     @property
     def text_tower(self):
-        return self.model.language_model.model
+        return self.model.language_model
 
     @property
     def vision_tower(self):
