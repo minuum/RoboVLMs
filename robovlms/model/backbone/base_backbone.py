@@ -521,7 +521,10 @@ class BaseRoboVLM(nn.Module):
 
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
-            model.gradient_checkpointing = True
+            if hasattr(model, "gradient_checkpointing_enable"):
+                model.gradient_checkpointing_enable()
+            else:
+                model.gradient_checkpointing = True
             model.training = True
         else:
 
