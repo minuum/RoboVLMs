@@ -103,6 +103,42 @@ class BaseRoboVLM(nn.Module):
         self.tokenizer = update_tokenizer(self.tokenizer, self.configs["tokenizer"])
         if self.train_setup_configs.get("reinit", False):
             initialize_param(self.backbone)
+        
+        # [NEW] Load pretrained VLM weights only (Action Head will be initialized fresh)
+        pretrained_vlm_path = self.configs.get("pretrained_vlm_path", None)
+        load_vlm_only = self.configs.get("load_vlm_only", False)
+        
+        if pretrained_vlm_path and load_vlm_only and os.path.exists(pretrained_vlm_path):
+            print(f"[Pretrained VLM] Loading from: {pretrained_vlm_path}")
+            pretrained = torch.load(pretrained_vlm_path, map_location='cpu')
+            state_dict = pretrained.get('state_dict', pretrained)
+            
+            # Filter: VLM only, exclude Action Head
+            # Also handle key prefix: "model.backbone.*" -> "backbone" (for self.backbone)
+            vlm_keys = {}
+            for k, v in state_dict.items():
+                if 'act_head' in k or 'action_token' in k:
+                    continue  # Skip Action Head
+                
+                # Remove "model." prefix if exists (Lightning checkpoint format)
+                new_key = k
+                if k.startswith("model.backbone."):
+                    new_key = k.replace("model.backbone.", "")  # -> text_model.*, vision_model.*
+                elif k.startswith("model."):
+                    new_key = k.replace("model.", "")
+                
+                vlm_keys[new_key] = v
+            
+            # Load VLM weights
+            missing, unexpected = self.backbone.load_state_dict(vlm_keys, strict=False)
+            print(f"[Pretrained VLM] Loaded {len(vlm_keys)} weights")
+            print(f"[Pretrained VLM] Missing: {len(missing)}, Unexpected: {len(unexpected)}")
+            if len(missing) > 0:
+                print(f"[Pretrained VLM] Missing keys (first 5): {missing[:5]}")
+            if len(unexpected) > 0:
+                print(f"[Pretrained VLM] Unexpected keys (first 5): {unexpected[:5]}")
+            print(f"[Pretrained VLM] Action Head will be initialized fresh for 2DoF")
+        
         self.act_head, self.fwd_head, self.clip_norm_head = self._init_heads()
 
         if self.act_head_configs is not None:
