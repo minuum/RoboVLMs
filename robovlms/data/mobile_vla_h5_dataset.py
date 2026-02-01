@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+from pathlib import Path
 from robovlms.utils.model_utils import build_tokenizer
 
 
@@ -188,7 +189,14 @@ class MobileVLAH5Dataset(Dataset):
                 language_bytes = f['language_instruction'][0]
                 language = language_bytes.decode('utf-8') if isinstance(language_bytes, bytes) else str(language_bytes)
             else:
-                language = "Navigate to the target location"  # fallback for old datasets
+                # 파일명에서 방향 정보 추출 (Basket Navigation task 등)
+                filename = Path(self.episode_files[ep_idx]).name.lower()
+                if 'left' in filename:
+                    language = "Navigate to the brown pot on the left"
+                elif 'right' in filename:
+                    language = "Navigate to the brown pot on the right"
+                else:
+                    language = "Navigate to the target location"
         
         # -------------------------------------------------------------------------
         # Data Augmentation: Mirroring (Left <-> Right)
