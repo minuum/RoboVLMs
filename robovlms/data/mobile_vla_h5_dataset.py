@@ -187,36 +187,50 @@ class MobileVLAH5Dataset(Dataset):
             # 언어 명령 로드 (H5 파일에서 실제 읽기)
             if 'language_instruction' in f:
                 language_bytes = f['language_instruction'][0]
-                language = language_bytes.decode('utf-8') if isinstance(language_bytes, bytes) else str(language_bytes)
+                language_base = language_bytes.decode('utf-8') if isinstance(language_bytes, bytes) else str(language_bytes)
             else:
                 # 파일명에서 방향 정보 추출 (Basket Navigation task 등)
                 filename = Path(self.episode_files[ep_idx]).name.lower()
                 if 'left' in filename:
-                    language = "Navigate to the brown pot on the left"
+                    language_base = "Navigate to the brown pot on the left"
                 elif 'right' in filename:
-                    language = "Navigate to the brown pot on the right"
+                    language_base = "Navigate to the brown pot on the right"
                 else:
-                    language = "Navigate to the target location"
-        
+                    language_base = "Navigate to the target location"
+
+            # -------------------------------------------------------------------------
+            # Action-Aware Dynamic Prompting: 프레임 액션에 따른 상세 지시어 추가
+            # 분석 결과: 로봇은 회전(Rotation)하지 않고 횡이동(Slide)함
+            # -------------------------------------------------------------------------
+            # 예측 대상인 첫 번째 액션(idx = window_size) 기준으로 상태 정의
+            target_action = actions[self.window_size] if len(actions) > self.window_size else actions[-1]
+            lin_y = target_action[1]
+            
+            if lin_y > 0.5:
+                suffix = ", sliding left"
+            elif lin_y < -0.5:
+                suffix = ", sliding right"
+            else:
+                suffix = ", moving forward"
+            
+            language = f"{language_base}{suffix}"
+
         # -------------------------------------------------------------------------
         # Data Augmentation: Mirroring (Left <-> Right)
         # -------------------------------------------------------------------------
         if self.augment and np.random.rand() < 0.5:
             # 1. Flip Images
-            # images[i] shape: (C, H, W)
-            images = [torch.flip(img, [2]) for img in images]  # Flip width dim
+            images = [torch.flip(img, [2]) for img in images]
             
             # 2. Invert linear_y Action (Left <-> Right)
-            # actions[i] shape: (2,) -> [linear_x, linear_y]
-            # linear_x(전진)는 그대로, linear_y(회전)는 부호 반전
             actions = [np.array([a[0], -a[1]]) for a in actions]
             
-            # 3. Swap Language 'left' <-> 'right'
-            lower_lang = language.lower()
-            if 'left' in lower_lang:
-                language = lower_lang.replace('left', 'right')
-            elif 'right' in lower_lang:
-                language = lower_lang.replace('right', 'left')
+            # 3. Swap Language 'left' <-> 'right' in the entire instruction
+            # This handles both base language and our dynamic suffix (sliding left <-> sliding right)
+            temp_lang = language.lower()
+            temp_lang = temp_lang.replace('left', 'PLACEHOLDER').replace('right', 'left').replace('PLACEHOLDER', 'right')
+            # Restore capitalization if needed
+            language = temp_lang.capitalize()
         # -------------------------------------------------------------------------
 
         # 텐서 변환
