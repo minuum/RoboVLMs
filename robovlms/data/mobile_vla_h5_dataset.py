@@ -41,6 +41,7 @@ class MobileVLAH5Dataset(Dataset):
         shift_first=False,
         abs_action=False,  # 액션 절대값 사용 (방향 제거)
         augment=False,     # 데이터 증강 (Mirroring 등)
+        discrete_action=False, # 분류 방식 사용 여부 (6개 클래스)
         **kwargs
     ):
         self.data_dir = data_dir
@@ -99,6 +100,8 @@ class MobileVLAH5Dataset(Dataset):
         self.window_size = window_size
         self.action_chunk_size = action_chunk_size  # 사용하지 않음 (호환성 유지)
         self.fwd_pred_next_n = kwargs.get("fwd_pred_next_n", action_chunk_size)  # kwargs에서 가져오기
+        self.discrete_action = discrete_action
+        print(f"DEBUG: MobileVLAH5Dataset discrete_action: {self.discrete_action}")
         
         # text_fn 초기화 (tokenizer_config가 있으면)
         if self.tokenizer_config is not None and self.tokenizer is not None:
@@ -235,14 +238,32 @@ class MobileVLAH5Dataset(Dataset):
 
         # 텐서 변환
         images_tensor = torch.stack(images)  # (total_frames_needed, C, H, W)
-        actions_tensor = torch.from_numpy(np.array(actions)).float()  # (total_frames_needed, 2)
         
-        # 방향 제거 옵션: linear_y의 절대값 사용
-        if self.abs_action:
-            actions_tensor[:, 1] = torch.abs(actions_tensor[:, 1])  # linear_y만 절대값
-        
-        # 액션 정규화 [-1, 1] (abs_action일 때는 [0, 1]이 됨)
-        actions_tensor = torch.clamp(actions_tensor, -1.0, 1.0)
+        if self.discrete_action:
+            # Action Classification Mapping (Option C)
+            # Map (x, y) to class index [0-5]
+            # 0: Stop, 1: Forward, 2: Left, 3: Right, 4: Diag FL, 5: Diag FR
+            cls_labels = []
+            for a in actions:
+                x, y = a[0], a[1]
+                if abs(x) < 0.5 and abs(y) < 0.5: label = 0
+                elif x > 0.5 and abs(y) < 0.1: label = 1
+                elif abs(x) < 0.1 and y > 0.5: label = 2
+                elif abs(x) < 0.1 and y < -0.5: label = 3
+                elif x > 0.5 and y > 0.5: label = 4
+                elif x > 0.5 and y < -0.5: label = 5
+                else: label = 0 # Default
+                cls_labels.append(label)
+            actions_tensor = torch.tensor(cls_labels, dtype=torch.long)
+        else:
+            actions_tensor = torch.from_numpy(np.array(actions)).float()  # (total_frames_needed, 2)
+            
+            # 방향 제거 옵션: linear_y의 절대값 사용
+            if self.abs_action:
+                actions_tensor[:, 1] = torch.abs(actions_tensor[:, 1])  # linear_y만 절대값
+            
+            # 액션 정규화 [-1, 1] (abs_action일 때는 [0, 1]이 됨)
+            actions_tensor = torch.clamp(actions_tensor, -1.0, 1.0)
         
         # 언어 토크나이징 (더미 - collate_fn에서 실제 처리)
         input_ids = torch.zeros(256, dtype=torch.long)
@@ -313,9 +334,9 @@ class MobileVLAH5Dataset(Dataset):
         fwd_mask = image_mask.unfold(1, self.fwd_pred_next_n, 1)[:, 1:]
         
         # 액션 chunk 생성 (unfold 사용)
-        action_chunck = action_tensors.unfold(1, self.fwd_pred_next_n, 1).permute(
-            0, 1, 3, 2
-        )
+        action_chunck = action_tensors.unfold(1, self.fwd_pred_next_n, 1)
+        if not self.discrete_action:
+            action_chunck = action_chunck.permute(0, 1, 3, 2)
         action_mask = action_mask.unfold(1, self.fwd_pred_next_n, 1)
         
         res = {

@@ -278,14 +278,12 @@ def experiment(variant):
                 model_type=variant["model"],
             ),
             discrete=(
-                False
-                if variant["act_head"] is None
-                else variant["act_head"].get("action_space", "continuous") == "discrete"
+                variant.get("discrete_action", False) or 
+                (variant["act_head"].get("action_space", "continuous") == "discrete" if variant["act_head"] is not None else False)
             ),
             discrete_action=(
-                False
-                if variant["act_head"] is None
-                else variant["act_head"].get("action_space", "continuous") == "discrete"
+                variant.get("discrete_action", False) or 
+                (variant["act_head"].get("action_space", "continuous") == "discrete" if variant["act_head"] is not None else False)
             ),
             use_mu_law=variant.get("use_mu_law", False),
             mu_val=variant.get("mu_val", 255),

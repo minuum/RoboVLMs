@@ -181,3 +181,123 @@ class MobileVLALSTMDecoder(BasePolicyHead):
             "acc_gripper": None,  # Mobile VLA는 gripper 없음
         }
 
+
+class MobileVLAClassificationDecoder(BasePolicyHead):
+    """
+    Mobile VLA 전용 분류(Classification) Decoder
+    
+    기존의 연속값(Continuous MSE/Huber) 대신 이산적인 액션 클래스를 예측합니다.
+    (Forward, Slide Left, Slide Right, Diag Left, Diag Right, Stop)
+    """
+    
+    def __init__(
+        self,
+        in_features,
+        action_dim, # num_classes (6)
+        down_sample,
+        latent,
+        fwd_pred_next_n,
+        window_size,
+        hidden_size=1024,
+        num_layers=4,
+        policy_rnn_dropout_p=0.0,
+        **kwargs,
+    ):
+        num_classes = kwargs.get("num_classes", 6)
+        super(MobileVLAClassificationDecoder, self).__init__(in_features, num_classes, **kwargs)
+        self.num_classes = num_classes
+        self.down_sample = down_sample
+        self.latent = latent
+        self.window_size = window_size
+        self.history_len = window_size
+        self.fwd_pred_next_n = fwd_pred_next_n
+        self.history_memory = []
+        self.hidden_size = hidden_size
+        
+        # LSTM Decoder
+        self.rnn = lstm_decoder(
+            in_features * latent, hidden_size * latent, num_layers, policy_rnn_dropout_p
+        )
+        
+        # 분류 헤드 (Logits 출력)
+        self.logits = nn.Linear(self.hidden_size * latent, fwd_pred_next_n * num_classes)
+        
+        self.hidden_state = None
+        if self.down_sample == "pooling":
+            self.global_1d_pool = nn.AdaptiveMaxPool1d(latent)
+        elif self.down_sample == "none":
+            pass
+        else:
+            raise NotImplementedError
+        initialize_param(self)
+
+    def reset(self):
+        self.hidden_state = None
+        self.history_memory = []
+
+    def forward(self, tok_seq, h_0=None, **kwargs):
+        if len(tok_seq.shape) == 4:
+            if self.down_sample == "pooling":
+                bs, seq_len = tok_seq.shape[:2]
+                tok_seq = rearrange(tok_seq, "b l n d-> (b l) n d")
+                tok_seq = self.global_1d_pool(tok_seq.permute(0, 2, 1))
+                tok_seq = rearrange(tok_seq, "(b l) d n -> b l (n d)", b=bs, l=seq_len)
+            elif self.down_sample == "none":
+                tok_seq = rearrange(tok_seq, "b l n d-> b l (n d)")
+        
+        if tok_seq.shape[1] == 1:
+            self.history_memory.append(tok_seq)
+            if len(self.history_memory) <= self.history_len:
+                x, h_n = self.rnn(tok_seq, self.hidden_state)
+                self.hidden_state = h_n
+                x = x[:, -1].unsqueeze(1)
+            else:
+                cur_len = len(self.history_memory)
+                for _ in range(cur_len - self.history_len):
+                    self.history_memory.pop(0)
+                hist_feature = torch.cat(self.history_memory, dim=1)
+                self.hidden_state = None
+                x, h_n = self.rnn(hist_feature, self.hidden_state)
+                x = x[:, -1].unsqueeze(1)
+        else:
+            self.hidden_state = h_0
+            if tok_seq.dtype != next(self.rnn.parameters()).dtype:
+                tok_seq = tok_seq.to(next(self.rnn.parameters()).dtype)
+            x, h_n = self.rnn(tok_seq, self.hidden_state)
+            self.hidden_state = h_n
+
+        # 클래스별 Logits 출력
+        logits = self.logits(x)
+        logits = rearrange(logits, "b l (n d) -> b l n d", n=self.fwd_pred_next_n, d=self.num_classes)
+
+        return logits, None
+
+    def loss(self, pred_action, labels, attention_mask=None):
+        if labels is None or labels[0] is None:
+            return {"loss_velocity": None, "loss_gripper": None, "acc_velocity": None}
+
+        logits = pred_action[0] if isinstance(pred_action, (tuple, list)) else pred_action
+        class_labels = labels[0] # (B, L, chunk)
+
+        flat_logits = rearrange(logits, "b l n d -> (b l n) d")
+        flat_labels = rearrange(class_labels, "b l n -> (b l n)").long()
+
+        if attention_mask is not None:
+            flat_mask = rearrange(attention_mask, "b l n -> (b l n)").bool()
+            flat_logits = flat_logits[flat_mask]
+            flat_labels = flat_labels[flat_mask]
+
+        if flat_labels.size(0) == 0:
+            return {"loss_velocity": torch.tensor(0.0).to(logits.device), "acc_velocity": 0.0}
+
+        loss = F.cross_entropy(flat_logits, flat_labels)
+        
+        # Accuracy 계산
+        preds = flat_logits.argmax(dim=-1)
+        acc = (preds == flat_labels).float().mean()
+
+        return {
+            "loss_velocity": loss,
+            "loss_gripper": None,
+            "acc_velocity": acc.item(),
+        }

@@ -290,6 +290,8 @@ class BaseTrainer(pl.LightningModule):
         loss_cap = prediction.get("loss_cap", None)
         loss_kl = prediction.get("loss_kl", None)
         loss_vl_cotrain = prediction.get("loss_vl_cotrain", None)
+        
+        acc_velocity_act = prediction.get("acc_velocity_act", None)
 
         ### loss logout for discrete setting
         action_l1 = prediction.get("action_l1_act", None)
@@ -339,6 +341,7 @@ class BaseTrainer(pl.LightningModule):
             "loss_kl": loss_kl,
             "clip_l1": clip_l1,
             "loss_vl_cotrain": loss_vl_cotrain,
+            "acc_velocity_act": acc_velocity_act,
         }
 
         return output
@@ -555,6 +558,8 @@ class BaseTrainer(pl.LightningModule):
             if self.act_pred:
                 prog_bar_set.add("loss_velocity_act")
                 prog_bar_set.add("rmse_velocity_act")
+                if output.get("acc_velocity_act") is not None:
+                    prog_bar_set.add("acc_velocity_act")
                 # prog_bar_set.add("loss_arm_act") # Deprecated
                 # prog_bar_set.add("loss_gripper_act") # Deprecated
                 # prog_bar_set.add("acc_arm_act") # Deprecated
@@ -642,6 +647,8 @@ class BaseTrainer(pl.LightningModule):
         if self.act_pred:
             prog_bar_set.add("loss_velocity_act")
             prog_bar_set.add("rmse_velocity_act")
+            if output.get("acc_velocity_act") is not None:
+                prog_bar_set.add("acc_velocity_act")
             # prog_bar_set.add("loss_arm_act")
             # prog_bar_set.add("loss_gripper_act")
             # prog_bar_set.add("acc_arm_act")
