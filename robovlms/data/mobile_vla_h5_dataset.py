@@ -167,6 +167,13 @@ class MobileVLAH5Dataset(Dataset):
                 img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
                 img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
                 img_tensor = img_tensor.permute(2, 0, 1)
+                
+                # Normalization (CLIP/Kosmos-2 mean & std)
+                # Fixes domain shift between training (was [0,1]) and inference (Normalized)
+                mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+                std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+                img_tensor = (img_tensor - mean) / std
+                
                 images.append(img_tensor)
             
             # Padding if needed (edge case)
@@ -201,22 +208,7 @@ class MobileVLAH5Dataset(Dataset):
                 else:
                     language_base = "Navigate to the target location"
 
-            # -------------------------------------------------------------------------
-            # Action-Aware Dynamic Prompting: 프레임 액션에 따른 상세 지시어 추가
-            # 분석 결과: 로봇은 회전(Rotation)하지 않고 횡이동(Slide)함
-            # -------------------------------------------------------------------------
-            # 예측 대상인 첫 번째 액션(idx = window_size) 기준으로 상태 정의
-            target_action = actions[self.window_size] if len(actions) > self.window_size else actions[-1]
-            lin_y = target_action[1]
-            
-            if lin_y > 0.5:
-                suffix = ", sliding left"
-            elif lin_y < -0.5:
-                suffix = ", sliding right"
-            else:
-                suffix = ", moving forward"
-            
-            language = f"{language_base}{suffix}"
+            language = language_base
 
         # -------------------------------------------------------------------------
         # Data Augmentation: Mirroring (Left <-> Right)

@@ -229,6 +229,14 @@ class MobileVLAClassificationDecoder(BasePolicyHead):
             pass
         else:
             raise NotImplementedError
+            
+        # Class Weights for cross entropy
+        class_weights = kwargs.get("class_weights", None)
+        if class_weights is not None:
+            self.register_buffer("class_weights_tensor", torch.tensor(class_weights, dtype=torch.float))
+        else:
+            self.class_weights_tensor = None
+            
         initialize_param(self)
 
     def reset(self):
@@ -290,7 +298,7 @@ class MobileVLAClassificationDecoder(BasePolicyHead):
         if flat_labels.size(0) == 0:
             return {"loss_velocity": torch.tensor(0.0).to(logits.device), "acc_velocity": 0.0}
 
-        loss = F.cross_entropy(flat_logits, flat_labels)
+        loss = F.cross_entropy(flat_logits, flat_labels, weight=self.class_weights_tensor)
         
         # Accuracy 계산
         preds = flat_logits.argmax(dim=-1)
