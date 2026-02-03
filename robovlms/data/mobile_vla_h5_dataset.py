@@ -56,6 +56,7 @@ class MobileVLAH5Dataset(Dataset):
         self.shift_first = shift_first
         self.abs_action = abs_action  # 방향 제거 옵션
         self.augment = augment and (not is_validation)  # 검증셋에는 증강 미적용
+        self.is_training = not is_validation
         
         # 에피소드 파일 로드
         episode_files = sorted(glob.glob(f"{data_dir}/{episode_pattern}"))
