@@ -602,6 +602,14 @@ class BaseRoboVLM(nn.Module):
         else:
             self.word_embedding.requires_grad_(False)
 
+        # Unfreeze Multi-modal projector (Bridge between Vision and Language)
+        if self.train_setup_configs.get("tune_mm_projector", False):
+            if hasattr(model, "image_to_text_projection"):
+                model.image_to_text_projection.requires_grad_(True)
+            elif hasattr(model, "mm_projector"):
+                model.mm_projector.requires_grad_(True)
+            print("Unfreezing Multi-modal Projector...")
+
         if self.use_vision_resampler:
             if not self.train_setup_configs.get("freeze_resampler", False):
                 self.vision_resampler.requires_grad_(True)

@@ -202,9 +202,29 @@ class MobileVLAH5Dataset(Dataset):
                 # 파일명에서 방향 정보 추출 (Basket Navigation task 등)
                 filename = Path(self.episode_files[ep_idx]).name.lower()
                 if 'left' in filename:
-                    language_base = "Navigate to the brown pot on the left"
+                    if self.is_training:
+                        variations = [
+                            "Navigate to the brown pot on the left",
+                            "Go to the left brown pot",
+                            "Move towards the pot on the left side",
+                            "Steer left to the brown pot",
+                            "Perform left navigation to the object"
+                        ]
+                        language_base = np.random.choice(variations)
+                    else:
+                        language_base = "Navigate to the brown pot on the left"
                 elif 'right' in filename:
-                    language_base = "Navigate to the brown pot on the right"
+                    if self.is_training:
+                        variations = [
+                            "Navigate to the brown pot on the right",
+                            "Go to the right brown pot",
+                            "Move towards the pot on the right side",
+                            "Steer right to the brown pot",
+                            "Perform right navigation to the object"
+                        ]
+                        language_base = np.random.choice(variations)
+                    else:
+                        language_base = "Navigate to the brown pot on the right"
                 else:
                     language_base = "Navigate to the target location"
 
