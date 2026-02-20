@@ -8,6 +8,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from pathlib import Path
+import torchvision.transforms as T
 from robovlms.utils.model_utils import build_tokenizer
 
 
@@ -42,6 +43,8 @@ class MobileVLAH5Dataset(Dataset):
         abs_action=False,  # 액션 절대값 사용 (방향 제거)
         augment=False,     # 데이터 증강 (Mirroring 등)
         discrete_action=False, # 분류 방식 사용 여부 (6개 클래스)
+        use_color_jitter=False,  # [V3] Color Jitter 증강
+        use_random_crop=False,   # [V3] Random Crop 증강
         **kwargs
     ):
         self.data_dir = data_dir
@@ -57,6 +60,20 @@ class MobileVLAH5Dataset(Dataset):
         self.abs_action = abs_action  # 방향 제거 옵션
         self.augment = augment and (not is_validation)  # 검증셋에는 증강 미적용
         self.is_training = not is_validation
+        
+        # [V3] Color Jitter & Random Crop — 학습셋에만 적용
+        self.use_color_jitter = use_color_jitter and (not is_validation)
+        self.use_random_crop = use_random_crop and (not is_validation)
+        
+        if self.use_color_jitter:
+            self.color_jitter = T.ColorJitter(
+                brightness=0.4, contrast=0.4, saturation=0.3, hue=0.1
+            )
+        if self.use_random_crop:
+            # 원본 이미지에서 80~100% 영역을 crop하여 image_size로 resize
+            self.random_crop = T.RandomResizedCrop(
+                size=image_size, scale=(0.8, 1.0), ratio=(0.9, 1.1)
+            )
         
         # 에피소드 파일 로드
         episode_files = sorted(glob.glob(f"{data_dir}/{episode_pattern}"))
@@ -101,8 +118,12 @@ class MobileVLAH5Dataset(Dataset):
         self.window_size = window_size
         self.action_chunk_size = action_chunk_size  # 사용하지 않음 (호환성 유지)
         self.fwd_pred_next_n = kwargs.get("fwd_pred_next_n", action_chunk_size)  # kwargs에서 가져오기
+        # main.py 및 gr_datamodule과의 호환성 강화
         self.discrete_action = discrete_action
-        print(f"DEBUG: MobileVLAH5Dataset discrete_action: {self.discrete_action}")
+        if "discrete" in kwargs and kwargs["discrete"]:
+            self.discrete_action = True
+        
+        print(f"DEBUG: MobileVLAH5Dataset final self.discrete_action: {self.discrete_action}")
         
         # text_fn 초기화 (tokenizer_config가 있으면)
         if self.tokenizer_config is not None and self.tokenizer is not None:
@@ -165,7 +186,17 @@ class MobileVLAH5Dataset(Dataset):
             for t in range(start_frame, min(start_frame + total_frames_needed, total_len)):
                 img_array = f['images'][t]
                 img = Image.fromarray(img_array.astype(np.uint8))
-                img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
+                
+                # [V3] Color Jitter — PIL 단계에서 적용 (정규화 전)
+                if self.use_color_jitter:
+                    img = self.color_jitter(img)
+                
+                # [V3] Random Crop — PIL 단계에서 적용
+                if self.use_random_crop:
+                    img = self.random_crop(img)
+                else:
+                    img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
+                
                 img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
                 img_tensor = img_tensor.permute(2, 0, 1)
                 
@@ -205,29 +236,29 @@ class MobileVLAH5Dataset(Dataset):
                 if 'left' in filename:
                     if self.is_training:
                         variations = [
-                            "Navigate to the brown pot on the left",
-                            "Go to the left brown pot",
-                            "Move towards the pot on the left side",
-                            "Steer left to the brown pot",
-                            "Perform left navigation to the object"
+                            "Navigate to the gray basket on the left",
+                            "Go to the left gray basket",
+                            "Move towards the basket on the left side",
+                            "Steer left to the gray basket",
+                            "Navigate to the gray basket"
                         ]
                         language_base = np.random.choice(variations)
                     else:
-                        language_base = "Navigate to the brown pot on the left"
+                        language_base = "Navigate to the gray basket on the left"
                 elif 'right' in filename:
                     if self.is_training:
                         variations = [
-                            "Navigate to the brown pot on the right",
-                            "Go to the right brown pot",
-                            "Move towards the pot on the right side",
-                            "Steer right to the brown pot",
-                            "Perform right navigation to the object"
+                            "Navigate to the gray basket on the right",
+                            "Go to the right gray basket",
+                            "Move towards the basket on the right side",
+                            "Steer right to the gray basket",
+                            "Navigate to the gray basket"
                         ]
                         language_base = np.random.choice(variations)
                     else:
-                        language_base = "Navigate to the brown pot on the right"
+                        language_base = "Navigate to the gray basket on the right"
                 else:
-                    language_base = "Navigate to the target location"
+                    language_base = "Navigate to the gray basket"
 
             language = language_base
 
@@ -253,19 +284,37 @@ class MobileVLAH5Dataset(Dataset):
         images_tensor = torch.stack(images)  # (total_frames_needed, C, H, W)
         
         if self.discrete_action:
-            # Action Classification Mapping (Option C)
-            # Map (x, y) to class index [0-5]
-            # 0: Stop, 1: Forward, 2: Left, 3: Right, 4: Diag FL, 5: Diag FR
+            # Action Classification Mapping (Omniwheel 9-classes)
+            # 0: Stop, 1: F, 2: B, 3: L, 4: R, 5: FL, 6: FR, 7: BL, 8: BR
             cls_labels = []
             for a in actions:
                 x, y = a[0], a[1]
-                if abs(x) < 0.5 and abs(y) < 0.5: label = 0
-                elif x > 0.5 and abs(y) < 0.1: label = 1
-                elif abs(x) < 0.1 and y > 0.5: label = 2
-                elif abs(x) < 0.1 and y < -0.5: label = 3
-                elif x > 0.5 and y > 0.5: label = 4
-                elif x > 0.5 and y < -0.5: label = 5
-                else: label = 0 # Default
+                # Threshold를 0.3으로 설정하여 미세한 노이즈 무시
+                is_x_pos = x > 0.3
+                is_x_neg = x < -0.3
+                is_y_pos = y > 0.3
+                is_y_neg = y < -0.3
+                
+                if not is_x_pos and not is_x_neg and not is_y_pos and not is_y_neg:
+                    label = 0 # Stop
+                elif is_x_pos and not is_y_pos and not is_y_neg:
+                    label = 1 # Forward
+                elif is_x_neg and not is_y_pos and not is_y_neg:
+                    label = 2 # Backward
+                elif not is_x_pos and not is_x_neg and is_y_pos:
+                    label = 3 # Left
+                elif not is_x_pos and not is_x_neg and is_y_neg:
+                    label = 4 # Right
+                elif is_x_pos and is_y_pos:
+                    label = 5 # Diag FL
+                elif is_x_pos and is_y_neg:
+                    label = 6 # Diag FR
+                elif is_x_neg and is_y_pos:
+                    label = 7 # Diag BL
+                elif is_x_neg and is_y_neg:
+                    label = 8 # Diag BR
+                else:
+                    label = 0 # Default Stop
                 cls_labels.append(label)
             actions_tensor = torch.tensor(cls_labels, dtype=torch.long)
         else:

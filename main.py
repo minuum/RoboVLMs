@@ -12,12 +12,12 @@ import datetime
 
 # Ensure lightning module can be imported
 try:
-    from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+    from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping
 except ImportError:
     # Try alternative import path
     try:
         import lightning
-        from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+        from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping
     except ImportError:
         print("Error: Cannot import lightning module. Please ensure it is installed.")
         print(f"Python path: {sys.path}")
@@ -150,6 +150,12 @@ def init_trainer_config(configs):
             mode="min",                # loss 최소화
             save_last=True,            # 마지막 epoch도 저장
             filename="epoch_{epoch:02d}-val_loss={val_loss:.3f}"
+        ),
+        EarlyStopping(
+            monitor="val_loss",
+            patience=3,              # 3 epoch 동안 개선 안되면 중단
+            mode="min",
+            verbose=True
         ),
     ]
 

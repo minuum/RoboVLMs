@@ -119,6 +119,9 @@ class GRDataModule(pl.LightningDataModule):
         dataset_config.update(self.kwargs)
         dataset_config["is_training"] = is_training
 
+        if get_rank() == 0:
+            print(f"DEBUG: Creating dataset {datset_type} with config keys: {list(dataset_config.keys())}")
+            print(f"DEBUG: discrete_action in config: {dataset_config.get('discrete_action', 'NOT_FOUND')}")
         dataset = getattr(robovlms.data, datset_type)(**dataset_config)
 
         data_loader = torch.utils.data.DataLoader(
